@@ -1,0 +1,13 @@
+/Users/alex/Projects/testspace/ru-cdc/target/debug/deps/libbitflags-ff0ad6b16058b8d0.rmeta: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/iter.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/parser.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/traits.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/public.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/internal.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/external.rs
+
+/Users/alex/Projects/testspace/ru-cdc/target/debug/deps/libbitflags-ff0ad6b16058b8d0.rlib: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/iter.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/parser.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/traits.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/public.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/internal.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/external.rs
+
+/Users/alex/Projects/testspace/ru-cdc/target/debug/deps/bitflags-ff0ad6b16058b8d0.d: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/iter.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/parser.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/traits.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/public.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/internal.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/external.rs
+
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/lib.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/iter.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/parser.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/traits.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/public.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/internal.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/bitflags-2.4.1/src/external.rs:

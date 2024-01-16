@@ -1,0 +1,13 @@
+/Users/alex/Projects/testspace/ru-cdc/target/debug/deps/libquote-05b504673c54706f.rmeta: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ext.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/format.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ident_fragment.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/to_tokens.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/runtime.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/spanned.rs
+
+/Users/alex/Projects/testspace/ru-cdc/target/debug/deps/libquote-05b504673c54706f.rlib: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ext.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/format.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ident_fragment.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/to_tokens.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/runtime.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/spanned.rs
+
+/Users/alex/Projects/testspace/ru-cdc/target/debug/deps/quote-05b504673c54706f.d: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ext.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/format.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ident_fragment.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/to_tokens.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/runtime.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/spanned.rs
+
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/lib.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ext.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/format.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/ident_fragment.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/to_tokens.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/runtime.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/quote-1.0.35/src/spanned.rs:

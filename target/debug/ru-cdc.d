@@ -1,0 +1,1 @@
+/Users/alex/Projects/testspace/ru-cdc/target/debug/ru-cdc: /Users/alex/Projects/testspace/ru-cdc/src/binlog.rs /Users/alex/Projects/testspace/ru-cdc/src/main.rs /Users/alex/Projects/testspace/ru-cdc/src/mysql.rs /Users/alex/Projects/testspace/ru-cdc/src/protocal.rs
