@@ -8,7 +8,7 @@ use std::{
 };
 use bytes::BytesMut;
 use nom::AsBytes;
-use crate::binlog::{EventHeader, EventRaw, QueryEvent, TableMap, TableMapEvent, UpdateRowEvent, WriteRowEvent};
+use crate::binlog::{DeleteRowEvent, EventHeader, EventRaw, QueryEvent, TableMap, TableMapEvent, UpdateRowEvent, WriteRowEvent};
 use crate::mysql::{Decoder, MySQLConnection, native_password_auth, Packet};
 use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ComBinLogDump, ComQuery, HandshakeResponse41, HandshakeV10, OkPacket};
 
@@ -94,12 +94,23 @@ fn main() {
             }
             if ev.header.event_type == 30 {
                 let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                table_map.decode_column_vals(i, event.header.table_id).expect("解码数据错误");
-                println!("insert event:{:?}", event);
+                let (i, values) = table_map.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码数据错误");
+                println!("insert event:{:?} \n ------- \n ====> Values:{:?}", event, values);
             }
             if ev.header.event_type == 31{
                 let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                println!("update event:{:?}", event);
+                let mut tm1 = table_map.clone();
+                let (i, old_values) = tm1.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码Update Val错误");
+                println!("update event:{:?} \n ----- \n =====> Old Value:{:?}", event, old_values);
+                let mut tm2 = table_map.clone();
+                let (i, new_values) = tm2.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码Update Old Val错误");
+                println!("======>New val:{new_values:?} \n Rest update bytes: {i:?}");
+            }
+            if ev.header.event_type == 32{
+                let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                let mut tm1 = table_map.clone();
+                let (i, old_values) = tm1.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
+                println!("======>Old val:{old_values:?} \n Rest update bytes: {i:?}");
             }
             if ev.header.event_type == 2 {
                 let (i, query) = QueryEvent::decode(ev.payload.as_bytes()).unwrap();

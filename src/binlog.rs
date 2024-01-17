@@ -383,18 +383,20 @@ impl TableMap {
         }
     }
 
-    pub fn decode_column_vals<'a>(&'a mut self, input: &'a [u8], table_id: u64) -> IResult<&[u8], (), ParseError> {
+    pub fn decode_column_vals<'a>(&'a mut self, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&[u8], Vec<Value>, ParseError> {
+        let (ip, null_map1) = take_bytes(input, col_map_len)?;
         let mut col_types = self.mapping.get_mut(&table_id).unwrap();
+        let mut values:Vec<Value> = Vec::new();
         let mut metas = self.metas.get_mut(&table_id).unwrap();
-        let mut i = input;
+        let mut i = ip;
         for (idx, mut col_type) in col_types.iter_mut().enumerate() {
             let meta = metas[idx].clone();
             println!("{col_type:?} use meta: {meta:?} idx: {idx}");
             let (new_i, val) = col_type.decode_val(i, &meta)?;
             i = new_i;
-            println!("val:{val:?}");
+            values.push(val);
         }
-        Ok((i, ()))
+        Ok((i, values))
     }
 }
 
@@ -503,11 +505,11 @@ impl Decoder for TableMapEvent {
         let (i, table_name) = take_utf8_end_of_null(i)?;
         let (i, column_count) = VLenInt::decode(i)?;
         let (i, column_map) = take_bytes(i, column_count.int() as usize)?;
-        println!("cloumn_map: {column_map:?}");
+        //println!("cloumn_map: {column_map:?}");
         let (i, meta_count) = VLenInt::decode(i)?;
         let (i, meta_block) = take_bytes(i, meta_count.int() as usize)?;
-        println!("meta_block: {meta_block:?}");
-        println!("Rest:{i:?}");
+        //println!("meta_block: {meta_block:?}");
+        //println!("Rest:{i:?}");
         Ok((i, Self{
             header,
             schema_name,
@@ -522,10 +524,41 @@ impl Decoder for TableMapEvent {
 #[derive(Debug, Clone)]
 pub struct WriteRowEvent {
     pub header: RowEventHeader,
-    pub col_count: u32
+    pub col_count: u32,
+    pub col_map_len: usize
 }
 
 impl Decoder for WriteRowEvent{
+    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+        let (i, header) = RowEventHeader::decode(input)?;
+        let (i, extra_len) = take_int2(i)?;
+        //println!("extra len:{extra_len}");
+        let (i, _) = if extra_len > 2 {
+            //处理大于2的extra数据
+            let (i, extra_bs) = take_bytes(i, extra_len as usize)?;
+            (i, extra_bs)
+        }else{(i, i)};
+        let (i, column_count) = VLenInt::decode(i)?;
+        let col_map_len = (column_count.int() as u32 + 7u32)/8u32;
+        let (i, col_map) = take_bytes(i, col_map_len as usize)?;
+        //println!("rest:{:?}", i);
+        Ok((i, Self{
+            header,
+            col_count:column_count.int() as u32,
+            col_map_len: col_map_len as usize
+        }))
+
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateRowEvent {
+    pub header: RowEventHeader,
+    pub col_map_len: usize,
+}
+
+
+impl Decoder for UpdateRowEvent{
     fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
         let (i, header) = RowEventHeader::decode(input)?;
         let (i, extra_len) = take_int2(i)?;
@@ -536,35 +569,47 @@ impl Decoder for WriteRowEvent{
             (i, extra_bs)
         }else{(i, i)};
         let (i, column_count) = VLenInt::decode(i)?;
+
         let col_map_len = (column_count.int() as u32 + 7u32)/8u32;
-        let (i, col_map) = take_bytes(i, col_map_len as usize)?;
-        let (i, null_map) = take_bytes(i, col_map_len as usize)?;
-        println!("col map:{col_map:?}");
+        let (i, col_map1) = take_bytes(i, col_map_len as usize)?;
+        let (i, col_map2) = take_bytes(i, col_map_len as usize)?;
+        println!("col map:{col_map1:?}\n col map2: {col_map2:?}");
         println!("rest:{:?}", i);
-
         Ok((i, Self{
             header,
-            col_count:column_count.int() as u32
+            col_map_len: col_map_len as usize
         }))
-
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct UpdateRowEvent {
+pub struct DeleteRowEvent {
     pub header: RowEventHeader,
+    pub col_map_len: usize
 }
 
-impl Decoder for UpdateRowEvent{
+impl Decoder for DeleteRowEvent {
     fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+        //new_values
         let (i, header) = RowEventHeader::decode(input)?;
-        println!("UPdate Rest: {i:?}");
+        let (i, extra_len) = take_int2(i)?;
+        println!("extra len:{extra_len}");
+        let (i, _) = if extra_len > 2 {
+            //处理大于2的extra数据
+            let (i, extra_bs) = take_bytes(i, extra_len as usize)?;
+            (i, extra_bs)
+        }else{(i, i)};
+        let (i, column_count) = VLenInt::decode(i)?;
+        let col_map_len = (column_count.int() as u32 + 7u32)/8u32;
+        let (i, col_map1) = take_bytes(i, col_map_len as usize)?;
+        println!("col map:{col_map1:?}");
+        println!("rest:{:?}", i);
         Ok((i, Self{
             header,
+            col_map_len: col_map_len as usize
         }))
+
     }
 }
-
 
 
 #[derive(Debug, Clone)]
