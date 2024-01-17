@@ -87,12 +87,14 @@ fn main() {
         if let Ok((_, ev)) = event_result {
             println!("Get Event: {:?}", ev);
             if ev.header.event_type == 19 {
-                let (i, tablemap) = TableMapEvent::decode(ev.payload.as_bytes()).unwrap();
+                let (i, tablemap) = TableMapEvent::decode(ev.payload.as_bytes()).expect("table map error");
                 println!("table map:{:?}", tablemap);
-                table_map.decode_columns(tablemap.header.table_id, tablemap.column_types);
+                table_map.decode_columns(tablemap.header.table_id, tablemap.column_types, tablemap.column_metas.as_bytes());
+                println!("meta map:{:?}", table_map.metas);
             }
             if ev.header.event_type == 30 {
                 let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                table_map.decode_column_vals(i, event.header.table_id).expect("解码数据错误");
                 println!("insert event:{:?}", event);
             }
             if ev.header.event_type == 31{

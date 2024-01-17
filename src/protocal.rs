@@ -66,12 +66,12 @@ impl Decoder for HandshakeV10 {
 
 
         Ok((i, Self {
-            protocol_version,
+            protocol_version:protocol_version as u32,
             server_version,
             thread_id,
             caps,
-            charset,
-            status,
+            charset:charset as u32,
+            status:status as u32,
             auth_plugin_name,
             auth_plugin_data,
         }))

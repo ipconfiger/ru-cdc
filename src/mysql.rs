@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use nom::{IResult, error, Err, Needed, bytes::{complete, streaming}, AsBytes};
+use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
 use nom::error::ErrorKind;
 use crate::protocal::{ColDef, err_maker, OkPacket, TextResult, TextResultSet, VLenInt};
@@ -81,14 +81,16 @@ impl MySQLConnection {
 }
 
 
-pub fn take_int1(i: &[u8])->IResult<&[u8], u32, ParseError> {
+pub fn take_int1(i: &[u8])->IResult<&[u8], u8, ParseError> {
     let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(1)(i)?;
-    Ok((i, u32::from_le_bytes([n_bytes[0], 0, 0, 0])))
+    Ok((i, n_bytes[0]))
 }
 
-pub fn take_int2(i: &[u8])->IResult<&[u8], u32, ParseError> {
+pub fn take_int2(i: &[u8])->IResult<&[u8], u16, ParseError> {
     let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(2)(i)?;
-    Ok((i, u32::from_le_bytes([n_bytes[0], n_bytes[1], 0, 0])))
+    let mut bs = [0u8; 2];
+    bs.copy_from_slice(n_bytes);
+    Ok((i, u16::from_le_bytes(bs)))
 }
 
 pub fn take_int3(i: &[u8])->IResult<&[u8], u32, ParseError> {
@@ -98,7 +100,14 @@ pub fn take_int3(i: &[u8])->IResult<&[u8], u32, ParseError> {
 
 pub fn take_int4(i: &[u8])->IResult<&[u8], u32, ParseError> {
     let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(4)(i)?;
-    Ok((i, u32::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3]])))
+    let mut bs = [0u8; 4];
+    bs.copy_from_slice(n_bytes);
+    Ok((i, u32::from_le_bytes(bs)))
+}
+
+pub fn take_int5(i: &[u8])->IResult<&[u8], u64, ParseError> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(5)(i)?;
+    Ok((i, u64::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3], n_bytes[4], 0, 0, 0])))
 }
 
 pub fn take_int6(i: &[u8])->IResult<&[u8], u64, ParseError> {
@@ -106,11 +115,73 @@ pub fn take_int6(i: &[u8])->IResult<&[u8], u64, ParseError> {
     Ok((i, u64::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3], n_bytes[4], n_bytes[5], 0, 0])))
 }
 
+pub fn take_int7(i: &[u8])->IResult<&[u8], u64, ParseError> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(7)(i)?;
+    Ok((i, u64::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3], n_bytes[4], n_bytes[5], n_bytes[6], 0])))
+}
+
+pub fn take_int8(i: &[u8])->IResult<&[u8], u64, ParseError> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(8)(i)?;
+    let mut bs = [0u8; 8];
+    bs.copy_from_slice(n_bytes);
+    Ok((i, u64::from_le_bytes(bs)))
+}
+
+
+pub fn take_int_n(i: &[u8], n: usize) -> IResult<&[u8], u64, ParseError> {
+    let (i, u) = match n {
+        1usize=>{
+            let (i, v) = take_int1(i)?;
+            (i, v as u64)
+        },
+        2usize=>{
+            let (i, v) = take_int2(i)?;
+            (i, v as u64)
+        },
+        3usize=>{
+            let (i, v) = take_int3(i)?;
+            (i, v as u64)
+        },
+        4usize=>{
+            let (i, v) = take_int4(i)?;
+            (i, v as u64)
+        },
+        5usize=>take_int5(i)?,
+        6usize=>take_int6(i)?,
+        7usize=>take_int7(i)?,
+        8usize=>take_int8(i)?,
+        _=>(i, 0)
+    };
+    Ok((i, u as u64))
+}
+
+pub fn take_be_int(i: &[u8], n: usize) -> IResult<&[u8], i64, ParseError>{
+    let (i, bs) = take_bytes(i, n)?;
+    println!("======> ms bs:{bs:?} of n:{n}");
+    if n == 2 {
+        let test = u16::from_be_bytes([bs[0], bs[1]]);
+        println!("======> test ms:  {test}");
+    }
+    Ok((i,
+    match n {
+        1usize=>u8::from_be_bytes([bs[0]]) as i64,
+        2usize=>u16::from_be_bytes([bs[0], bs[1]])  as i64,
+        3usize=>i32::from_be_bytes([0, bs[0], bs[1], bs[2]])  as i64,
+        4usize=>i32::from_be_bytes([bs[0], bs[1], bs[2], bs[3]])  as i64,
+        5usize=>i64::from_be_bytes([0, 0, 0, bs[0], bs[1], bs[2], bs[3], bs[4]]),
+        6usize=>i64::from_be_bytes([0, 0, bs[0], bs[1], bs[2], bs[3], bs[4], bs[5]]),
+        7usize=>i64::from_be_bytes([0, bs[0], bs[1], bs[2], bs[3], bs[4], bs[5], bs[6]]),
+        8usize=>i64::from_be_bytes([bs[0], bs[1], bs[2], bs[3], bs[4], bs[5], bs[6], bs[7]]),
+        _=>0 as i64
+    }))
+}
+
 pub fn take_utf8_end_of_null(i: &[u8])->IResult<&[u8], String, ParseError> {
     let (i, str_bytes) = complete::take_while(|b|{ b != b'\0' })(i)?;
     let (i, _) = complete::take::<usize, &[u8], ParseError>(1)(i)?;
     Ok((i, String::from_utf8(Vec::from(str_bytes)).unwrap_or_else(|e| "".to_string())))
 }
+
 
 pub fn take_bytes(i: &[u8], size:usize) -> IResult<&[u8], &[u8], ParseError> {
     let (i, bs) = complete::take::<usize, &[u8], ParseError>(size)(i)?;
@@ -149,6 +220,29 @@ pub fn take_fix_string(i: &[u8], len:usize) -> IResult<&[u8], String, ParseError
     Ok((i, String::from_utf8(Vec::from(str_bytes)).unwrap_or_else(|e| "".to_string())))
 }
 
+pub fn read_fps(i: &[u8], fps: u8) -> IResult<&[u8], u32, ParseError> {
+    let read = match fps {
+        1|2=>1,
+        3|4=>2,
+        5|6=>3,
+        _=>0
+    };
+    if read>0 {
+        println!(" =======> read: {read}  raw=>{i:?}");
+        let (i, microsecond) = take_be_int(i, read)?;
+        println!("read ms:{microsecond}");
+        let microsecond = if microsecond > 0 {
+            let microsecond = if fps % 2 > 0 {
+                microsecond / 10i64
+            } else { microsecond };
+            microsecond * (10i64.pow((6u8 - fps) as u32))
+        } else { 0i64 };
+        Ok((i, microsecond as u32))
+    }else{
+        Ok((i, 0))
+    }
+}
+
 pub fn write_var_bytes(buf:&mut BytesMut, input: impl AsRef<[u8]>) {
     let len = input.as_ref().len() as u64;
     let len = VLenInt::new(len);
@@ -181,7 +275,7 @@ impl Decoder for Header {
     fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized{
         let (input, len) = take_int3(input)?;
         let (ip, serial_id) = take_int1(input)?;
-        Ok((&[], Header{len, serial_id}))
+        Ok((&[], Header{len, serial_id:serial_id as u32}))
     }
 }
 
