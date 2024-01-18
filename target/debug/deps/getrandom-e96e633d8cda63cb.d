@@ -1,0 +1,12 @@
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/libgetrandom-e96e633d8cda63cb.rmeta: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error_impls.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util_libc.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/macos.rs
+
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/libgetrandom-e96e633d8cda63cb.rlib: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error_impls.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util_libc.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/macos.rs
+
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/getrandom-e96e633d8cda63cb.d: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error_impls.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util_libc.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/macos.rs
+
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/lib.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/error_impls.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/util_libc.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/getrandom-0.2.12/src/macos.rs:

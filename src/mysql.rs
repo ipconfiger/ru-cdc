@@ -4,7 +4,9 @@ use std::net::TcpStream;
 use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
 use nom::error::ErrorKind;
-use crate::protocal::{ColDef, err_maker, OkPacket, TextResult, TextResultSet, VLenInt};
+use serde::de::Unexpected::Str;
+use crate::executor::FieldMeta;
+use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, err_maker, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
 
 pub(crate) type ParseError<'a> = error::Error<&'a [u8]>;
 
@@ -16,6 +18,45 @@ pub struct MySQLConnection {
 impl MySQLConnection {
     pub(crate) fn from_tcp(tcp: TcpStream) -> Self {
         Self{conn: tcp}
+    }
+
+    pub fn get_connection(ip: &str, port: u32) -> Self {
+        let stream = TcpStream::connect(format!("{ip}:{port}")).unwrap();
+        let mut conn = Self::from_tcp(stream);
+        let (i, p) = conn.read_package::<HandshakeV10>().expect("read error");
+        let mut auth_resp = BytesMut::new();
+        let resp = HandshakeResponse41 {
+            caps: Capabilities::CLIENT_LONG_PASSWORD
+                | Capabilities::CLIENT_PROTOCOL_41
+                | Capabilities::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+                | Capabilities::CLIENT_RESERVED
+                | Capabilities::CLIENT_RESERVED2
+                | Capabilities::CLIENT_DEPRECATE_EOF
+                | Capabilities::CLIENT_PLUGIN_AUTH,
+            max_packet_size: 4294967295,
+            charset: 255,
+            user_name: "canal".into(),
+            auth_resp,
+            database: None,
+            plugin_name: Some("canal".into()),
+            connect_attrs: Default::default(),
+            zstd_level: 0,
+        };
+        conn.write_package(1, &resp).expect("Write Error");
+        let (i, switch_req) = conn.read_package::<AuthSwitchReq>().expect("auth error");
+        if switch_req.payload.plugin_name != "mysql_native_password" {
+            panic!("")
+        }
+        let auth_data = native_password_auth("canal".as_bytes(), &p.payload.auth_plugin_data);
+        let resp = AuthSwitchResp {
+            data: BytesMut::from_iter(auth_data),
+        };
+        conn.write_package(3, &resp).expect("sent auth error");
+
+        let (i, resp) = conn.read_package::<OkPacket>().unwrap();
+        println!("ok resp:{:?} \n Connected!", resp.payload);
+
+        conn
     }
 
     pub fn read_package<P:Decoder+Debug>(&mut self) -> Result<(&[u8], Packet<P>), Err<ParseError<'_>>> {
@@ -76,8 +117,23 @@ impl MySQLConnection {
         self.conn.write_all(&buff)
     }
 
-
-
+    pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>) {
+        let sql = format!("desc {db}.{table}");
+        let query = ComQuery{query: sql};
+        self.write_package(0, &query);
+        let (_, text_resp) = self.read_text_result_set().unwrap();
+        for row in text_resp.rows {
+            let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
+            let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
+            let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
+            let meta = FieldMeta{
+                name,
+                field_type,
+                is_pk: !pk.is_empty(),
+            };
+            col_meta.push(meta);
+        }
+    }
 }
 
 

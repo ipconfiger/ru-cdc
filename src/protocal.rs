@@ -212,9 +212,14 @@ impl Decoder for TextResult {
         let mut i = input;
         while i.len() > 0 {
             if i[0] != 0x00 {
-                let (ip, col) = take_var_bytes(i)?;
-                columns.push(Vec::from(col));
-                i = ip;
+                if i[0] == 0xfb {
+                    i = &i[1..];
+                    columns.push(Vec::from("NULL".as_bytes()));
+                }else {
+                    let (ip, col) = take_var_bytes(i)?;
+                    columns.push(Vec::from(col));
+                    i = ip;
+                }
             }else{
                 i = &i[1..];
                 columns.push(Vec::from([]));
