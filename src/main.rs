@@ -2,6 +2,8 @@ mod mysql;
 mod protocal;
 mod binlog;
 mod executor;
+mod config;
+mod message_queue;
 
 use std::{
     io::{Read, Write},
@@ -13,47 +15,51 @@ use crate::binlog::{DeleteRowEvent, EventHeader, EventRaw, QueryEvent, TableMap,
 use crate::executor::{DmlData, Workers};
 use crate::mysql::{Decoder, MySQLConnection, native_password_auth, Packet};
 use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ComBinLogDump, ComQuery, HandshakeResponse41, HandshakeV10, OkPacket};
+use clap::{Arg, App};
+use crate::config::{Config, get_abs_path};
+use crate::message_queue::{MessageQueues, QueueMessage};
 
 fn main() {
-    // let stream = TcpStream::connect("192.168.1.222:3399").unwrap();
-    // let mut conn = MySQLConnection::from_tcp(stream);
-    // let (i, p) = conn.read_package::<HandshakeV10>().expect("read error");
-    // println!("read packet: {:?}", p);
-    // let mut auth_resp = BytesMut::new();
-    // //auth_resp.extend_from_slice(&auth_data);
-    // let resp = HandshakeResponse41 {
-    //     caps: Capabilities::CLIENT_LONG_PASSWORD
-    //         | Capabilities::CLIENT_PROTOCOL_41
-    //         | Capabilities::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
-    //         | Capabilities::CLIENT_RESERVED
-    //         | Capabilities::CLIENT_RESERVED2
-    //         | Capabilities::CLIENT_DEPRECATE_EOF
-    //         | Capabilities::CLIENT_PLUGIN_AUTH,
-    //     max_packet_size: 4294967295,
-    //     charset: 255,
-    //     user_name: "canal".into(),
-    //     auth_resp,
-    //     database: None,
-    //     plugin_name: Some("canal".into()),
-    //     connect_attrs: Default::default(),
-    //     zstd_level: 0,
-    // };
-    // conn.write_package(1, &resp).expect("Write Error");
-    // let (i, switch_req) = conn.read_package::<AuthSwitchReq>().expect("auth error");
-    // println!("read switch: {:?}", switch_req);
-    // if switch_req.payload.plugin_name != "mysql_native_password" {
-    //     panic!("")
-    // }
-    // let auth_data = native_password_auth("canal".as_bytes(), &p.payload.auth_plugin_data);
-    // println!("auth data: {:?}", auth_data);
-    // let resp = AuthSwitchResp {
-    //     data: BytesMut::from_iter(auth_data),
-    // };
-    // conn.write_package(3, &resp).expect("sent auth error");
-    //
-    //
-    // let (i, resp) = conn.read_package::<OkPacket>().unwrap();
-    // println!("ok resp:{:?}", resp.payload);
+    let matches = App::new("Ru-CDC")
+        .arg(Arg::with_name("config")
+            .short('c')
+            .long("config")
+            .help("配置文件地址")
+            .required(true)
+            .takes_value(true))
+        .arg(Arg::with_name("serve")
+            .short('s')
+            .long("serve")
+            .help("启动服务"))
+        .arg(Arg::with_name("gen")
+            .short('g')
+            .long("gen")
+            .help("启动服务"))
+        .get_matches();
+    let config_path = matches.get_one::<String>("config").expect("配置文件地址");
+    if matches.is_present("gen") {
+        cli_gen_default(config_path);
+    }
+    if matches.is_present("serve") {
+        serve(config_path);
+    }
+}
+
+fn cli_gen_default(config_path: &String) {
+    println!("写入默认配置到目标地址:{config_path}");
+    let mut cfg = Config::gen_default();
+    let cfg_str = cfg.to_json();
+    println!("{cfg_str}");
+    cfg.save_to(get_abs_path(config_path.to_string()));
+    println!("Dump complete!")
+}
+
+
+fn serve(cfg_path: &String) {
+    let config = Config::load_from(cfg_path.to_string());
+    let mut mq = MessageQueues::new();
+    mq.start_message_queue_from_config(config.mqs.clone());
+
     let mut conn = MySQLConnection::get_connection("192.168.1.222", 3399);
 
     let query = ComQuery{query: "set @master_binlog_checksum= @@global.binlog_checksum".to_string()};
@@ -85,7 +91,7 @@ fn main() {
     let mut current_data:Option<DmlData> = None;
 
     let mut worker = Workers::new();
-    worker.start(2usize);
+    worker.start(2usize, mq.clone(), config.instances.clone());
 
     loop {
         let (_, buf) = conn.read_package::<Vec<u8>>().unwrap();

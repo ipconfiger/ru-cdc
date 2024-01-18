@@ -1,0 +1,13 @@
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/liburl-394235cb0108461c.rmeta: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/host.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/origin.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/parser.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/path_segments.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/slicing.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/quirks.rs
+
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/liburl-394235cb0108461c.rlib: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/host.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/origin.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/parser.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/path_segments.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/slicing.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/quirks.rs
+
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/url-394235cb0108461c.d: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/host.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/origin.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/parser.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/path_segments.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/slicing.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/quirks.rs
+
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/lib.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/host.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/origin.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/parser.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/path_segments.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/slicing.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/url-2.5.0/src/quirks.rs:

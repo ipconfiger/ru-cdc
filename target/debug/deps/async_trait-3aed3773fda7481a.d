@@ -1,0 +1,12 @@
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/libasync_trait-3aed3773fda7481a.dylib: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/args.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/bound.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/expand.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/lifetime.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/parse.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/receiver.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/verbatim.rs
+
+/Users/alex/Projects/workspace/ru-cdc/target/debug/deps/async_trait-3aed3773fda7481a.d: /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/lib.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/args.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/bound.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/expand.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/lifetime.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/parse.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/receiver.rs /Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/verbatim.rs
+
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/lib.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/args.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/bound.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/expand.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/lifetime.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/parse.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/receiver.rs:
+/Users/alex/.cargo/registry/src/rsproxy.cn-8f6827c7555bfaf8/async-trait-0.1.77/src/verbatim.rs:
