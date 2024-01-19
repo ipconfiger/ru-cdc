@@ -58,3 +58,8 @@ The configuration file contains the following:
 After modifying the configuration according to your architecture, start the service with the following command
 
     :#ru-cdc --config /etc/cdc-config.json --serve
+
+
+## Do some benchmark
+
+![20240119210946066](https://github.com/ipconfiger/ru-cdc/assets/950968/cae55600-0e4c-4512-b2d3-ec6362131cad)
