@@ -58,6 +58,9 @@
     :#ru-cdc --config /etc/cdc-config.json --serve
 
 
+## 压测压测看看
+
+![20240119210946066](https://github.com/ipconfiger/ru-cdc/assets/950968/cae55600-0e4c-4512-b2d3-ec6362131cad)
 
 
 
