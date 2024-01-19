@@ -3,7 +3,7 @@ use std::fmt::format;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use rdkafka::ClientConfig;
-use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
+use rdkafka::producer::{BaseProducer, BaseRecord, Producer, ThreadedProducer, DefaultProducerContext};
 use crate::config::{KafkaConfig, Mq, MqConfig, RedisConfig};
 use redis::{AsyncCommands, Client, Commands};
 use crate::executor::generate_random_number;
@@ -70,7 +70,7 @@ fn wait_for_message(chn: Arc<Mutex<VecDeque<QueueMessage>>>) -> QueueMessage {
         if let Some(msg) = message {
             return msg;
         }else{
-            thread::sleep(std::time::Duration::from_millis(generate_random_number() as u64));
+            thread::sleep(std::time::Duration::from_micros(generate_random_number() as u64));
         }
     }
 }
@@ -89,8 +89,9 @@ trait QueueClient : Send{
 }
 
 
+
 struct KafkaClient {
-    producer: Option<BaseProducer>
+    producer: Option<ThreadedProducer<DefaultProducerContext>>
 }
 
 impl KafkaClient{
@@ -99,10 +100,13 @@ impl KafkaClient{
         let producer = if servers.is_empty() {
             None
         } else{
-            let pd: Option<BaseProducer> = match ClientConfig::new()
+            let pd: Option<ThreadedProducer<DefaultProducerContext>> = match ClientConfig::new()
                 .set("bootstrap.servers", servers)
+                .set("message.timeout.ms", "5000")
                 .create() {
-                Ok(p)=>Some(p),
+                Ok(p)=>{
+                    Some(p)
+                },
                 Err(err)=>{
                     println!("kafka producer error:{:?}", err);
                     None
@@ -125,10 +129,6 @@ impl QueueClient for KafkaClient {
                     println!("Kafka sent error:{:?}", err);
                 }
             }
-            for _i in  1..10 {
-                producer.poll(std::time::Duration::from_millis(100));
-            }
-            producer.flush(std::time::Duration::from_secs(1)).unwrap();
         }else{
             println!("Kafka Not Connected");
         }

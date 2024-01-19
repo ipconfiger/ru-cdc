@@ -23,7 +23,7 @@ impl Counter{
 
 pub fn generate_random_number() -> u32 {
     let mut rng = rand::thread_rng();
-    rng.gen_range(79..=113)
+    rng.gen_range(1..=7)
 }
 
 #[derive(Debug, Clone)]
@@ -154,7 +154,7 @@ impl TableMetaMapping {
                     }
                 }
             }else{
-                thread::sleep(std::time::Duration::from_millis(generate_random_number() as u64));
+                thread::sleep(std::time::Duration::from_micros(generate_random_number() as u64));
             }
         }
     }
@@ -177,7 +177,7 @@ impl Pool {
             if let Some(d) = data {
                 return d;
             }else{
-                thread::sleep(std::time::Duration::from_millis(generate_random_number() as u64));
+                thread::sleep(std::time::Duration::from_micros(generate_random_number() as u64));
             }
         }
     }
