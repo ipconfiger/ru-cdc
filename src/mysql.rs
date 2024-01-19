@@ -20,7 +20,7 @@ impl MySQLConnection {
         Self{conn: tcp}
     }
 
-    pub fn get_connection(ip: &str, port: u32) -> Self {
+    pub fn get_connection(ip: &str, port: u32, max_packet_size: u32, user_name: String, passwd: String) -> Self {
         let stream = TcpStream::connect(format!("{ip}:{port}")).unwrap();
         let mut conn = Self::from_tcp(stream);
         let (i, p) = conn.read_package::<HandshakeV10>().expect("read error");
@@ -33,12 +33,12 @@ impl MySQLConnection {
                 | Capabilities::CLIENT_RESERVED2
                 | Capabilities::CLIENT_DEPRECATE_EOF
                 | Capabilities::CLIENT_PLUGIN_AUTH,
-            max_packet_size: 4294967295,
+            max_packet_size,
             charset: 255,
-            user_name: "canal".into(),
+            user_name,
             auth_resp,
             database: None,
-            plugin_name: Some("canal".into()),
+            plugin_name: Some(passwd.clone()),
             connect_attrs: Default::default(),
             zstd_level: 0,
         };
@@ -47,7 +47,7 @@ impl MySQLConnection {
         if switch_req.payload.plugin_name != "mysql_native_password" {
             panic!("")
         }
-        let auth_data = native_password_auth("canal".as_bytes(), &p.payload.auth_plugin_data);
+        let auth_data = native_password_auth(passwd.as_bytes(), &p.payload.auth_plugin_data);
         let resp = AuthSwitchResp {
             data: BytesMut::from_iter(auth_data),
         };

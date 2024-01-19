@@ -58,9 +58,9 @@ fn cli_gen_default(config_path: &String) {
 fn serve(cfg_path: &String) {
     let config = Config::load_from(cfg_path.to_string());
     let mut mq = MessageQueues::new();
-    mq.start_message_queue_from_config(config.mqs.clone());
+    mq.start_message_queue_from_config(config.clone().mqs);
 
-    let mut conn = MySQLConnection::get_connection("192.168.1.222", 3399);
+    let mut conn = MySQLConnection::get_connection(config.clone().db_ip.as_str(), config.clone().db_port as u32, config.clone().max_packages as u32, config.clone().user_name, config.clone().passwd);
 
     let query = ComQuery{query: "set @master_binlog_checksum= @@global.binlog_checksum".to_string()};
     conn.write_package(0, &query).unwrap();
@@ -91,7 +91,7 @@ fn serve(cfg_path: &String) {
     let mut current_data:Option<DmlData> = None;
 
     let mut worker = Workers::new();
-    worker.start(2usize, mq.clone(), config.instances.clone());
+    worker.start(2usize, mq.clone(), config.clone().instances, config.clone());
 
     loop {
         let (_, buf) = conn.read_package::<Vec<u8>>().unwrap();
@@ -127,12 +127,26 @@ fn serve(cfg_path: &String) {
                 let mut tm2 = table_map.clone();
                 let (i, new_values) = tm2.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码Update Old Val错误");
                 println!("======>New val:{new_values:?} \n Rest update bytes: {i:?}");
+                if let Some(ref mut data) = current_data {
+                    data.append_data("Update".to_string(), 0, new_values, old_values);
+                    &worker.push(data);
+                    println!("=====> Data In Queue");
+                }else{
+                    println!("=====> no DML instance");
+                }
             }
             if ev.header.event_type == 32{
                 let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
                 let mut tm1 = table_map.clone();
                 let (i, old_values) = tm1.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
                 println!("======>Old val:{old_values:?} \n Rest update bytes: {i:?}");
+                if let Some(ref mut data) = current_data {
+                    data.append_data("Delete".to_string(), 0, Vec::new(), old_values);
+                    &worker.push(data);
+                    println!("=====> Data In Queue");
+                }else{
+                    println!("=====> no DML instance");
+                }
             }
             if ev.header.event_type == 2 {
                 let (i, query) = QueryEvent::decode(ev.payload.as_bytes()).unwrap();

@@ -5,7 +5,7 @@ use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 use rand::Rng;
-use crate::config::Instance;
+use crate::config::{Config, Instance};
 use crate::message_queue::{MessageQueues, QueueMessage};
 use crate::mysql::MySQLConnection;
 
@@ -202,15 +202,16 @@ impl Workers {
         Self{ pool: Pool{ pool: Arc::new(Mutex::new(VecDeque::new())) } }
     }
 
-    pub fn start(&mut self, size: usize, queue: MessageQueues, instances: Vec<Instance>){
+    pub fn start(&mut self, size: usize, queue: MessageQueues, instances: Vec<Instance>, config: Config){
         let mut mapping = TableMetaMapping::new();
         for thread_id in 0..size {
             let mut the_pool = self.pool.clone();
             let mut the_mapping = mapping.clone();
             let the_queue = queue.clone();
             let the_ins = instances.clone();
+            let the_config = config.clone();
             thread::spawn(move || {
-                worker_body(thread_id, &mut the_pool, &mut the_mapping, the_queue, the_ins);
+                worker_body(thread_id, &mut the_pool, &mut the_mapping, the_queue, the_ins, the_config);
             });
         }
     }
@@ -220,9 +221,9 @@ impl Workers {
     }
 }
 
-fn worker_body(thread_id: usize, pool: &mut Pool, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>) {
+fn worker_body(thread_id: usize, pool: &mut Pool, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
     println!("[t:{thread_id}] Worker Started");
-    let mut conn = MySQLConnection::get_connection("192.168.1.222", 3399);
+    let mut conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name, config.passwd);
     loop {
         let data = pool.poll_data();
         println!("[t:{thread_id}]DML Data: {data:?}");
