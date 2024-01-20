@@ -54,8 +54,7 @@ impl MySQLConnection {
         conn.write_package(3, &resp).expect("sent auth error");
 
         let (i, resp) = conn.read_package::<OkPacket>().unwrap();
-        println!("ok resp:{:?} \n Connected!", resp.payload);
-
+        println!("Connected!");
         conn
     }
 
@@ -113,7 +112,7 @@ impl MySQLConnection {
                                     payload: &P)-> Result<(), std::io::Error> {
         let mut buff = BytesMut::new();
         encode_package::<P>(&mut buff, seq_id, payload);
-        println!("write command {:?}: {:?}", payload, &buff.as_bytes());
+        //println!("write command {:?}: {:?}", payload, &buff.as_bytes());
         self.conn.write_all(&buff)
     }
 

@@ -65,13 +65,13 @@ fn serve(cfg_path: &String) {
     let query = ComQuery{query: "set @master_binlog_checksum= @@global.binlog_checksum".to_string()};
     conn.write_package(0, &query).unwrap();
     let (i, resp) = conn.read_package::<OkPacket>().unwrap();
-    println!("ok resp:{:?}", resp);
+    //println!("ok resp:{:?}", resp);
 
     let query: ComQuery = "show master status".into();
     conn.write_package(0, &query).unwrap();
 
     let (_, text_resp) = conn.read_text_result_set().unwrap();
-    println!("text result is :{:?}", text_resp);
+    //println!("text result is :{:?}", text_resp);
 
     let file = String::from_utf8(text_resp.rows[0].columns[0].clone()).unwrap();
     let pos: u32 = String::from_utf8(text_resp.rows[0].columns[1].clone())
@@ -102,20 +102,21 @@ fn serve(cfg_path: &String) {
             println!("Get Event: {:?}", ev);
             if ev.header.event_type == 19 {
                 let (i, tablemap) = TableMapEvent::decode(ev.payload.as_bytes()).expect("table map error");
-                println!("table map:{:?}", tablemap);
+                //println!("table map:{:?}", tablemap);
                 table_map.decode_columns(tablemap.header.table_id, tablemap.column_types, tablemap.column_metas.as_bytes());
-                println!("meta map:{:?}", table_map.metas);
+                //println!("meta map:{:?}", table_map.metas);
                 current_data = Some(DmlData::new_data(tablemap.header.table_id as u32, tablemap.schema_name.clone(), tablemap.table_name.clone()));
             }
             if ev.header.event_type == 30 {
                 let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let (i, values) = table_map.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码数据错误");
-                println!("insert event:{:?} \n ------- \n ====> Values:{:?}", event, values);
+                let (i, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
                 if let Some(ref mut data) = current_data {
-                    data.append_data("Insert".to_string(), 0, values, Vec::new());
-                    &worker.push(data);
-                    println!("=====> Data In Queue");
-                }else{
+                    for row in rows{
+                        data.append_data("Insert".to_string(), 0, row, Vec::new());
+                        &worker.push(data);
+                        println!("=====> Data In Queue");
+                    }
+                } else {
                     println!("=====> no DML instance");
                 }
             }

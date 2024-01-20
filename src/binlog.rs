@@ -106,8 +106,8 @@ impl From<u8> for ColumnType {
 }
 
 impl ColumnType {
-    fn decode_val<'a>(&'a mut self, input: &'a[u8], meta: &ColMeta) -> IResult<&[u8], Value, ParseError> where Self: Sized {
-        match self {
+    fn decode_val<'a>(tp: ColumnType, input: &'a [u8], meta: &ColMeta) -> IResult<&'a [u8], Value, ParseError<'a>> {
+        match tp {
             Self::TINYINT=>{
                 let (i, val) = take_int1(input)?;
                 Ok((i, Value::from(val as u8)))
@@ -392,11 +392,11 @@ impl TableMap {
         for (idx, mut col_type) in col_types.iter_mut().enumerate() {
             let meta = metas[idx].clone();
             println!("{col_type:?} use meta: {meta:?} idx: {idx}");
-            let (new_i, val) = col_type.decode_val(i, &meta)?;
+            let (new_i, val) = ColumnType::decode_val(col_type.clone(), i, &meta)?;
             i = new_i;
             values.push(val);
         }
-        Ok((i, values))
+        Ok((i, values.clone()))
     }
 }
 
@@ -526,6 +526,36 @@ pub struct WriteRowEvent {
     pub header: RowEventHeader,
     pub col_count: u32,
     pub col_map_len: usize
+}
+impl WriteRowEvent {
+    pub fn decode_column_multirow_vals<'a>(table_map: &TableMap, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Vec<Value>>, ParseError<'a>> {
+        let mut rest_input = input;
+        let mut rows:Vec<Vec<Value>> = Vec::new();
+        loop{
+            let (i, vals) = WriteRowEvent::decode_column_vals(table_map.clone(), rest_input, table_id, col_map_len)?;
+            rest_input = i;
+            rows.push(vals);
+            if rest_input.len() <= 4 {
+                break;
+            }
+        }
+        Ok((rest_input, rows))
+    }
+
+    pub fn decode_column_vals<'a>(mut table_map: TableMap, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Value>, ParseError<'a>> {
+        let (ip, null_map1) = take_bytes(input, col_map_len)?;
+        let mut values:Vec<Value> = Vec::new();
+        let mut metas = &mut table_map.metas.get_mut(&table_id).unwrap();
+        let mut i = ip;
+        for (idx, mut col_type) in &mut table_map.mapping.get_mut(&table_id).unwrap().iter_mut().enumerate() {
+            let meta = metas[idx].clone();
+            //println!("{col_type:?} use meta: {meta:?} idx: {idx}");
+            let (new_i, val) = ColumnType::decode_val(col_type.clone(), i, &meta)?;
+            i = new_i;
+            values.push(val.clone());
+        }
+        Ok((i, values))
+    }
 }
 
 impl Decoder for WriteRowEvent{

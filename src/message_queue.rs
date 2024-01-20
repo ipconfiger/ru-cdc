@@ -103,6 +103,7 @@ impl KafkaClient{
             let pd: Option<ThreadedProducer<DefaultProducerContext>> = match ClientConfig::new()
                 .set("bootstrap.servers", servers)
                 .set("message.timeout.ms", "5000")
+                .set("queue.buffering.max.ms", "200")
                 .create() {
                 Ok(p)=>{
                     Some(p)
