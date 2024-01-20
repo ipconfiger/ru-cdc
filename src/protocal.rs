@@ -40,13 +40,13 @@ impl Decoder for HandshakeV10 {
         let (i, charset) = take_int1(i)?;
         let (i, status) = take_int2(i)?;
         let (i, h_cap) = take_bytes(i, 2usize)?;
-        println!("auth_data_len: {:?}\n", i.to_vec());
+        //println!("auth_data_len: {:?}\n", i.to_vec());
         let (i, auth_data_len) = take_int1(i)?;
-        println!("take_bytes 10: {:?}\n", i.to_vec());
+        //println!("take_bytes 10: {:?}\n", i.to_vec());
         let (i, _) = take_bytes(i,10usize)?;
         let i = if auth_data_len > 0{
             let len = 13.max(auth_data_len - 8) as usize;
-            println!("auth_data_len大于0: {}  {}", auth_data_len, len);
+            //println!("auth_data_len大于0: {}  {}", auth_data_len, len);
             let (ip, bs) = take_bytes(i, len)?;
             auth_plugin_data.extend_from_slice(bs);
             ip
@@ -141,7 +141,7 @@ impl AuthSwitchReq {
 impl Decoder for AuthSwitchReq {
     fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
         let (i, tag) =take_int1(input)?;
-        println!("auth switch: {:?}", input);
+        //println!("auth switch: {:?}", input);
         if tag != 0xfe {
             //let (_, err_pack) = ErrPacket::decode(input).expect("bhbhbhbh");
             let (_, ok_pack) = OkPacket::decode(input).expect("decode ok error");

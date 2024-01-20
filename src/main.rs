@@ -91,7 +91,7 @@ fn serve(cfg_path: &String) {
     let mut current_data:Option<DmlData> = None;
 
     let mut worker = Workers::new();
-    worker.start(2usize, mq.clone(), config.clone().instances, config.clone());
+    worker.start(7usize, mq.clone(), config.clone().instances, config.clone());
     let mut seq_idx:u64 = 0;
 
     loop {
@@ -100,7 +100,7 @@ fn serve(cfg_path: &String) {
         let event_result = EventRaw::decode(buf.payload.as_bytes());
 
         if let Ok((_, ev)) = event_result {
-            println!("Get Event: {:?}", ev);
+            //println!("Get Event: {:?}", ev);
             if ev.header.event_type == 19 {
                 let (i, tablemap) = TableMapEvent::decode(ev.payload.as_bytes()).expect("table map error");
                 //println!("table map:{:?}", tablemap);
@@ -116,7 +116,6 @@ fn serve(cfg_path: &String) {
                         data.append_data(seq_idx, "Insert".to_string(), row, Vec::new());
                         &worker.push(data);
                         seq_idx += 1;
-                        println!("=====> Data In Queue");
                     }
                 } else {
                     println!("=====> no DML instance");
@@ -130,7 +129,6 @@ fn serve(cfg_path: &String) {
                         data.append_data(seq_idx, "Update".to_string(), new_vals, old_vals);
                         &worker.push(data);
                         seq_idx += 1;
-                        println!("=====> Data In Queue");
                     }
                 }else{
                     println!("=====> no DML instance");
@@ -145,7 +143,6 @@ fn serve(cfg_path: &String) {
                         data.append_data(seq_idx, "Delete".to_string(), Vec::new(), old_val);
                         &worker.push(data);
                         seq_idx += 1;
-                        println!("=====> Data In Queue");
                     }
                 }else{
                     println!("=====> no DML instance");
@@ -153,7 +150,7 @@ fn serve(cfg_path: &String) {
             }
             if ev.header.event_type == 2 {
                 let (i, query) = QueryEvent::decode(ev.payload.as_bytes()).unwrap();
-                println!("statement event:{:?}", query);
+                //println!("statement event:{:?}", query);
             }
 
         }

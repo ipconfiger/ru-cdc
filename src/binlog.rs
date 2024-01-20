@@ -152,7 +152,7 @@ impl ColumnType {
                 let (i, int_part) = take_bytes(input, intg_bytes)?;
                 let (i, scale_part) = take_bytes(i, frac_bytes)?;
 
-                Ok((i, Value::from(format!("test decimal with {int_part:?} and {scale_part:?}"))))
+                Ok((i, Value::from(format!("{int_part:?}.{scale_part:?}"))))
             },
             Self::DATE=>{
                 let (i, time) = take_int3(input)?;
@@ -223,7 +223,7 @@ impl ColumnType {
             Self::TEXT=>{
                 let length_size = meta.length_size.unwrap_or(1u8);
                 let (i, str_len) = take_int_n(input, length_size as usize)?;
-                println!("BLOB str len:{str_len}");
+                //println!("BLOB str len:{str_len}");
                 let (i, bs) = take_bytes(i, str_len as usize)?;
                 Ok((i, Value::from(bs)))
             },
@@ -368,16 +368,16 @@ impl TableMap {
                 _=>ColMeta::new()
             };
             metas.push(meta.clone());
-            println!("{tp:?} with meta:{meta:?} rest:{i:?}");
+            //println!("{tp:?} with meta:{meta:?} rest:{i:?}");
         }
-        println!("mapped columns:{types:?}");
+        //println!("mapped columns:{types:?}");
         if let Some(val) = self.mapping.insert(tb, types){
-            println!("更新列映射");
+            //println!("更新列映射");
         }else{
             println!("新增列映射");
         }
         if let Some(m) = self.metas.insert(tb, metas) {
-            println!("更新列元数据")
+            //println!("更新列元数据")
         }else{
             println!("新增列元数据")
         }
@@ -696,9 +696,9 @@ pub struct QueryEvent {
 impl Decoder for QueryEvent {
     fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
         let (i, header) = QueryEventHeader::decode(input)?;
-        println!("Query Rest:{i:?}");
+        //println!("Query Rest:{i:?}");
         let (i, bs) = take_bytes(i, header.status_len as usize)?;
-        println!("status rest:{bs:?}");
+        //println!("status rest:{bs:?}");
         let (i, database) = take_utf8_end_of_null(i)?;
         let (i, statement) = take_eof_string(&i[0..i.len()-4])?;
         Ok((i, Self{ header, database, statement }))

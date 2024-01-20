@@ -35,12 +35,14 @@ The configuration file contains the following:
         "max_packages": 4294967295,    // Maximum package size
         "user_name": "canal",          // Account for subscribing to binlog
         "passwd": "canal",             // Password for the account
+        "workers": 8                   // Count of worker threads
         "mqs": [                       // List of message queues
             {
                 "mq_name": "the_kafka",   // Name of the message queue, used to specify the use of this message queue
                 "mq_cfg": {               
                     "KAFKA": {          
-                        "brokers": "192.168.1.222:9099"  // List of Kafka brokers, separated by commas for multiple brokers
+                        "brokers": "192.168.1.222:9099",  // List of Kafka brokers, separated by commas for multiple brokers
+                        "queue_buffering_max": 300        // configure section of Producer queue.buffering.max.ms
                     }
                 }
             }

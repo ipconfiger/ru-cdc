@@ -33,12 +33,14 @@
         "max_packages": 4294967295,    // 最大数据包大小
         "user_name": "canal",          // 订阅binlog的账号
         "passwd": "canal",             // 该账号的密码
+        "workers": 8                   // 工作线程的数量
         "mqs": [                       // 消息队列的列表
             {
                 "mq_name": "the_kafka",   // 消息队列的名字，用于指定使用该消息队列
                 "mq_cfg": {               
                     "KAFKA": {          
-                        "brokers": "192.168.1.222:9099"  // Kakfa的Broker列表，多个用逗号隔开
+                        "brokers": "192.168.1.222:9099",  // Kakfa的Broker列表，多个用逗号隔开
+                        "queue_buffering_max": 300        // 批次发送的最大等待毫秒数
                     }
                 }
             }

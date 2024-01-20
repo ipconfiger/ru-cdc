@@ -212,10 +212,10 @@ pub fn take_int_n(i: &[u8], n: usize) -> IResult<&[u8], u64, ParseError> {
 
 pub fn take_be_int(i: &[u8], n: usize) -> IResult<&[u8], i64, ParseError>{
     let (i, bs) = take_bytes(i, n)?;
-    println!("======> ms bs:{bs:?} of n:{n}");
+    //println!("======> ms bs:{bs:?} of n:{n}");
     if n == 2 {
         let test = u16::from_be_bytes([bs[0], bs[1]]);
-        println!("======> test ms:  {test}");
+        //println!("======> test ms:  {test}");
     }
     Ok((i,
     match n {
@@ -283,9 +283,9 @@ pub fn read_fps(i: &[u8], fps: u8) -> IResult<&[u8], u32, ParseError> {
         _=>0
     };
     if read>0 {
-        println!(" =======> read: {read}  raw=>{i:?}");
+        //println!(" =======> read: {read}  raw=>{i:?}");
         let (i, microsecond) = take_be_int(i, read)?;
-        println!("read ms:{microsecond}");
+        //println!("read ms:{microsecond}");
         let microsecond = if microsecond > 0 {
             let microsecond = if fps % 2 > 0 {
                 microsecond / 10i64
@@ -347,7 +347,7 @@ pub fn encode_package<P: Encoder>( buf: &mut BytesMut, serial_id: u8, payload: &
     payload.encode(buf);
     let end = buf.len();
     let len = end - 4;
-    println!("body len:{:?} {:?}", len, u32::to_le_bytes(len as u32));
+    //println!("body len:{:?} {:?}", len, u32::to_le_bytes(len as u32));
     buf[0..3].copy_from_slice(&u32::to_le_bytes(len as u32)[0..3])
 }
 

@@ -8,6 +8,7 @@ use rand::Rng;
 use crate::config::{Config, Instance};
 use crate::message_queue::{MessageQueues, QueueMessage};
 use crate::mysql::MySQLConnection;
+use std::sync::mpsc::{channel, Sender, Receiver};
 
 fn current_ts() -> u64 {
     let now = SystemTime::now();
@@ -156,30 +157,23 @@ impl TableMetaMapping {
 
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Pool {
-    pub pool: Arc<Mutex<VecDeque<DmlData>>>
+    pub tx_channel : HashMap<u32, Arc<Mutex<Sender<DmlData>>>>
 }
 
 impl Pool {
-    fn poll_data(&mut self) -> DmlData {
-        loop {
-            let data = if let Ok(mut queue) = self.pool.lock() {
-                queue.pop_front()
-            }else{None};
-            if let Some(d) = data {
-                return d;
-            }else{
-                thread::sleep(std::time::Duration::from_micros(generate_random_number() as u64));
-            }
-        }
+    pub fn regist_tx(&mut self, key: u32, tx: Arc<Mutex<Sender<DmlData>>>) {
+        self.tx_channel.insert(key, tx);
     }
 
     pub fn push(&mut self, data: &DmlData) {
-        loop {
-            if let Ok(mut queue) = self.pool.lock() {
-                queue.push_back(data.clone());
-                return;
+        let i = ((data.id + 1) % self.tx_channel.len() as u64) as u32;
+        if let Some(tx_ref) = self.tx_channel.get_mut(&i) {
+            if let Ok(tx) = tx_ref.lock(){
+                tx.send(data.clone()).expect("send error");
+            }else{
+                println!("==========>(夭寿啦，获取锁失败了)");
             }
         }
     }
@@ -192,20 +186,25 @@ pub struct Workers {
 
 impl Workers {
     pub fn new()->Self{
-        Self{ pool: Pool{ pool: Arc::new(Mutex::new(VecDeque::new())) } }
+        Self{ pool: Pool{ tx_channel: HashMap::new() } }
     }
 
+
     pub fn start(&mut self, size: usize, queue: MessageQueues, instances: Vec<Instance>, config: Config){
+
         let mut mapping = TableMetaMapping::new();
         for thread_id in 0..size {
-            let mut the_pool = self.pool.clone();
+            let (tx, rx) = channel::<DmlData>();
+            let tx = Arc::new(Mutex::new(tx));
+            self.pool.regist_tx(thread_id as u32, tx);
             let mut the_mapping = mapping.clone();
             let the_queue = queue.clone();
             let the_ins = instances.clone();
             let the_config = config.clone();
             thread::spawn(move || {
-                worker_body(thread_id, &mut the_pool, &mut the_mapping, the_queue, the_ins, the_config);
+                worker_body(thread_id, rx, &mut the_mapping, the_queue, the_ins, the_config);
             });
+
         }
     }
 
@@ -214,35 +213,35 @@ impl Workers {
     }
 }
 
-fn worker_body(thread_id: usize, pool: &mut Pool, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
+fn worker_body(thread_id: usize, rx: Receiver<DmlData>, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
     println!("[t:{thread_id}] Worker Started");
     let mut conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name, config.passwd);
     loop {
-        let data = pool.poll_data();
-        println!("[t:{thread_id}]DML Data: {data:?}");
+        if let Ok(data) = rx.recv() {
+            let mut ports: Vec<(String, String)> = Vec::new();
 
-        let mut ports: Vec<(String, String)> = Vec::new();
-
-        for instance in instances.iter_mut(){
-            if let Some((mq_name, topic)) = instance.check_if_need_a_mq(data.database.clone(), data.table.clone()) {
-                ports.push((mq_name, topic));
+            for instance in instances.iter_mut(){
+                if let Some((mq_name, topic)) = instance.check_if_need_a_mq(data.database.clone(), data.table.clone()) {
+                    ports.push((mq_name, topic));
+                }
             }
-        }
-        if ports.len() < 1 {
-            println!("未匹配到实例：{}.{}", &data.database, &data.table);
-            continue;
-        }
-
-        let meta = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone());
-        //println!("\n\n table fields meta:{meta:?}");
-        let message = DmlMessage::from_dml(data, &meta);
-        if let Ok(json_message) = serde_json::to_string(&message) {
-            println!("Canal JSON:\n{}", &json_message);
-            for (mq_name, topic) in ports {
-                let msg_qu = QueueMessage{ topic, payload: json_message.clone() };
-                queue.push(&mq_name, msg_qu);
+            if ports.len() < 1 {
+                println!("未匹配到实例：{}.{}", &data.database, &data.table);
+                continue;
             }
 
+            let meta = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone());
+            //println!("\n\n table fields meta:{meta:?}");
+            let message = DmlMessage::from_dml(data, &meta);
+            if let Ok(json_message) = serde_json::to_string(&message) {
+                //println!("Canal JSON:\n{}", &json_message);
+                for (mq_name, topic) in ports {
+                    let msg_qu = QueueMessage{ topic, payload: json_message.clone() };
+                    queue.push(&mq_name, msg_qu);
+                }
+
+            }
         }
+        //println!("[t:{thread_id}]DML Data: {data:?}");
     }
 }

@@ -5,7 +5,8 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KafkaConfig {
-    pub brokers: String
+    pub brokers: String,
+    pub queue_buffering_max: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +70,7 @@ pub struct Config {
     pub max_packages: u64,
     pub user_name: String,
     pub passwd: String,
+    pub workers: u8,
     pub mqs: Vec<Mq>,
     pub instances: Vec<Instance>
 }
@@ -109,7 +111,8 @@ impl Config {
             max_packages: 4294967295,
             user_name: "canal".to_string(),
             passwd: "canal".to_string(),
-            mqs: vec![Mq{ mq_name: "the_kafka".to_string(), mq_cfg: MqConfig::KAFKA(KafkaConfig{ brokers: "127.0.0.1:9092".to_string() }) }],
+            workers: 0,
+            mqs: vec![Mq{ mq_name: "the_kafka".to_string(), mq_cfg: MqConfig::KAFKA(KafkaConfig{ brokers: "127.0.0.1:9092".to_string(), queue_buffering_max: 333 }) }],
             instances: vec![Instance{
                 mq: "the_kafka".to_string(),
                 schemas: "test*".to_string(),
