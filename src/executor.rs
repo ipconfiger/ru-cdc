@@ -9,16 +9,10 @@ use crate::config::{Config, Instance};
 use crate::message_queue::{MessageQueues, QueueMessage};
 use crate::mysql::MySQLConnection;
 
-type OnDML = dyn Fn(String, QueueMessage) -> () + Send;
-
-
-struct Counter(u64);
-
-impl Counter{
-    fn increase(&mut self) -> u64 {
-        self.0+=1;
-        self.0
-    }
+fn current_ts() -> u64 {
+    let now = SystemTime::now();
+    let timestamp = now.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+    timestamp
 }
 
 pub fn generate_random_number() -> u32 {
@@ -39,11 +33,9 @@ pub struct DmlData {
 }
 
 impl DmlData {
-    const COUNTER: Counter = Counter(0);
     pub fn new_data(table_id: u32, database: String, table: String) -> Self {
-        let new_id = Self::COUNTER.increase();
         Self{
-            id: new_id,
+            id: 0,
             table_id,
             database,
             table,
@@ -53,9 +45,10 @@ impl DmlData {
             old_data: Vec::new(),
         }
     }
-    pub fn append_data(&mut self, dml_type: String, es: u64, data: Vec<Value>, old_data: Vec<Value>) {
+    pub fn append_data(&mut self, idx: u64, dml_type: String, data: Vec<Value>, old_data: Vec<Value>) {
+        self.id = idx;
         self.dml_type = dml_type;
-        self.es = es;
+        self.es = current_ts();
         self.data.extend_from_slice(data.as_slice());
         self.old_data.extend_from_slice(old_data.as_slice());
     }

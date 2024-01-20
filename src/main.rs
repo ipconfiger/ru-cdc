@@ -92,6 +92,7 @@ fn serve(cfg_path: &String) {
 
     let mut worker = Workers::new();
     worker.start(2usize, mq.clone(), config.clone().instances, config.clone());
+    let mut seq_idx:u64 = 0;
 
     loop {
         let (_, buf) = conn.read_package::<Vec<u8>>().unwrap();
@@ -112,8 +113,9 @@ fn serve(cfg_path: &String) {
                 let (i, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
                 if let Some(ref mut data) = current_data {
                     for row in rows{
-                        data.append_data("Insert".to_string(), 0, row, Vec::new());
+                        data.append_data(seq_idx, "Insert".to_string(), row, Vec::new());
                         &worker.push(data);
+                        seq_idx += 1;
                         println!("=====> Data In Queue");
                     }
                 } else {
@@ -122,29 +124,29 @@ fn serve(cfg_path: &String) {
             }
             if ev.header.event_type == 31{
                 let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let mut tm1 = table_map.clone();
-                let (i, old_values) = tm1.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码Update Val错误");
-                println!("update event:{:?} \n ----- \n =====> Old Value:{:?}", event, old_values);
-                let mut tm2 = table_map.clone();
-                let (i, new_values) = tm2.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码Update Old Val错误");
-                println!("======>New val:{new_values:?} \n Rest update bytes: {i:?}");
+                let (i, rows) = UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码Update Val错误");
                 if let Some(ref mut data) = current_data {
-                    data.append_data("Update".to_string(), 0, new_values, old_values);
-                    &worker.push(data);
-                    println!("=====> Data In Queue");
+                    for (old_vals, new_vals) in rows{
+                        data.append_data(seq_idx, "Update".to_string(), new_vals, old_vals);
+                        &worker.push(data);
+                        seq_idx += 1;
+                        println!("=====> Data In Queue");
+                    }
                 }else{
                     println!("=====> no DML instance");
                 }
             }
             if ev.header.event_type == 32{
                 let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let mut tm1 = table_map.clone();
-                let (i, old_values) = tm1.decode_column_vals(i, event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
+                let (i, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
                 println!("======>Old val:{old_values:?} \n Rest update bytes: {i:?}");
                 if let Some(ref mut data) = current_data {
-                    data.append_data("Delete".to_string(), 0, Vec::new(), old_values);
-                    &worker.push(data);
-                    println!("=====> Data In Queue");
+                    for old_val in old_values {
+                        data.append_data(seq_idx, "Delete".to_string(), Vec::new(), old_val);
+                        &worker.push(data);
+                        seq_idx += 1;
+                        println!("=====> Data In Queue");
+                    }
                 }else{
                     println!("=====> no DML instance");
                 }
