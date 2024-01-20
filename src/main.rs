@@ -112,24 +112,20 @@ fn serve(cfg_path: &String) {
                 let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
                 let (i, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
                 if let Some(ref mut data) = current_data {
-                    for row in rows{
-                        data.append_data(seq_idx, "Insert".to_string(), row, Vec::new());
-                        &worker.push(data);
-                        seq_idx += 1;
-                    }
+                    data.append_data(seq_idx, "INSERT".to_string(), rows, Vec::new());
+                    &worker.push(data);
+                    seq_idx += 1;
                 } else {
                     println!("=====> no DML instance");
                 }
             }
             if ev.header.event_type == 31{
                 let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let (i, rows) = UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码Update Val错误");
+                let (i, (old_values, new_values)) = UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码Update Val错误");
                 if let Some(ref mut data) = current_data {
-                    for (old_vals, new_vals) in rows{
-                        data.append_data(seq_idx, "Update".to_string(), new_vals, old_vals);
-                        &worker.push(data);
-                        seq_idx += 1;
-                    }
+                    data.append_data(seq_idx, "UPDATE".to_string(), new_values, old_values);
+                    &worker.push(data);
+                    seq_idx += 1;
                 }else{
                     println!("=====> no DML instance");
                 }
@@ -139,11 +135,9 @@ fn serve(cfg_path: &String) {
                 let (i, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
                 println!("======>Old val:{old_values:?} \n Rest update bytes: {i:?}");
                 if let Some(ref mut data) = current_data {
-                    for old_val in old_values {
-                        data.append_data(seq_idx, "Delete".to_string(), Vec::new(), old_val);
-                        &worker.push(data);
-                        seq_idx += 1;
-                    }
+                    data.append_data(seq_idx, "DELETE".to_string(), Vec::new(), old_values);
+                    &worker.push(data);
+                    seq_idx += 1;
                 }else{
                     println!("=====> no DML instance");
                 }

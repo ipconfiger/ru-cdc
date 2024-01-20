@@ -3,10 +3,11 @@ use std::fmt::{Debug, Formatter};
 use bitflags::Flags;
 use nom::error::ErrorKind;
 use nom::{AsBytes, AsChar, IResult};
-use serde_json::{json, Value};
+use serde_json::{json, Value, from_slice, to_vec};
 use crate::mysql::{Decoder, ParseError, read_fps, take_be_int, take_bytes, take_eof_string, take_fix_string, take_int1, take_int2, take_int3, take_int4, take_int6, take_int8, take_int_n, take_utf8_end_of_null};
 use crate::protocal::{err_maker, VLenInt};
 use nom::Err;
+use redis::FromRedisValue;
 
 fn parse_bcd(input: &[u8], digits: usize) -> String {
     input.iter().flat_map(|&byte| {
@@ -151,8 +152,14 @@ impl ColumnType {
                 let frac_bytes = (frac_len + 1) / 2;
                 let (i, int_part) = take_bytes(input, intg_bytes)?;
                 let (i, scale_part) = take_bytes(i, frac_bytes)?;
-
-                Ok((i, Value::from(format!("{int_part:?}.{scale_part:?}"))))
+                let (int_val_bs, flag) = take_bytes(int_part, 1)?;
+                let (_, int_val) = take_be_int(int_val_bs, int_val_bs.len())?;
+                let (_, float_val) = take_be_int(scale_part, scale_part.len())?;
+                if flag[0] == 0x80 {
+                    Ok((i, Value::from(format!("{int_val}.{float_val}"))))
+                }else{
+                    Ok((i, Value::from(format!("-{int_val:?}.{float_val:?}"))))
+                }
             },
             Self::DATE=>{
                 let (i, time) = take_int3(input)?;
@@ -225,7 +232,8 @@ impl ColumnType {
                 let (i, str_len) = take_int_n(input, length_size as usize)?;
                 //println!("BLOB str len:{str_len}");
                 let (i, bs) = take_bytes(i, str_len as usize)?;
-                Ok((i, Value::from(bs)))
+                let v = Value::from(bs);
+                Ok((i, v))
             },
             _=>Err(err_maker(input.clone(), ErrorKind::Verify))
         }
@@ -598,19 +606,21 @@ impl Decoder for UpdateRowEvent{
 }
 
 impl UpdateRowEvent {
-    pub fn fetch_rows<'a>(input: &'a [u8], mut table_map: TableMap, table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<(Vec<Value>, Vec<Value>)>, ParseError<'a>> {
+    pub fn fetch_rows<'a>(input: &'a [u8], mut table_map: TableMap, table_id: u64, col_map_len: usize) -> IResult<&'a [u8], (Vec<Vec<Value>>, Vec<Vec<Value>>), ParseError<'a>> {
         let mut rest_input = input;
-        let mut result:Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
+        let mut old_result:Vec<Vec<Value>> = Vec::new();
+        let mut new_result:Vec<Vec<Value>> = Vec::new();
         loop {
             let (i, old_vals) = decode_column_vals(table_map.clone(), rest_input, table_id, col_map_len)?;
             let (i, new_vals) = decode_column_vals(table_map.clone(), i, table_id, col_map_len)?;
             rest_input = i;
-            result.push((old_vals, new_vals));
+            old_result.push(old_vals);
+            new_result.push(new_vals);
             if rest_input.len() <= 4{
                 break;
             }
         }
-        Ok((rest_input, result))
+        Ok((rest_input, (old_result, new_result)))
     }
 }
 

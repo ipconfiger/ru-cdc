@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use hex;
 use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,10 +11,16 @@ use crate::message_queue::{MessageQueues, QueueMessage};
 use crate::mysql::MySQLConnection;
 use std::sync::mpsc::{channel, Sender, Receiver};
 
+fn current_ms_ts() -> u128 {
+    let now = SystemTime::now();
+    let timestamp = now.duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis();
+    timestamp
+}
+
 fn current_ts() -> u64 {
     let now = SystemTime::now();
     let timestamp = now.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
-    timestamp
+    timestamp * 1000
 }
 
 pub fn generate_random_number() -> u32 {
@@ -29,8 +36,8 @@ pub struct DmlData {
     pub table: String,
     pub dml_type: String,
     pub es: u64,
-    pub data: Vec<Value>,
-    pub old_data: Vec<Value>
+    pub data: Vec<Vec<Value>>,
+    pub old_data: Vec<Vec<Value>>
 }
 
 impl DmlData {
@@ -46,7 +53,7 @@ impl DmlData {
             old_data: Vec::new(),
         }
     }
-    pub fn append_data(&mut self, idx: u64, dml_type: String, data: Vec<Value>, old_data: Vec<Value>) {
+    pub fn append_data(&mut self, idx: u64, dml_type: String, data: Vec<Vec<Value>>, old_data: Vec<Vec<Value>>) {
         self.id = idx;
         self.dml_type = dml_type;
         self.es = current_ts();
@@ -61,58 +68,86 @@ pub struct DmlMessage {
     pub id: u64,
     pub database: String,
     pub table: String,
-    pub pkNames: String,
+    pub pkNames: Vec<String>,
     pub isDdl: bool,
     pub r#type: String,
     pub es: u64,
-    pub ts: u64,
+    pub ts: u128,
     pub sql: Option<String>,
-    pub sqlType: Option<HashMap<String, Value>>,
+    pub sqlType: HashMap<String, i16>,
     pub mysqlType: HashMap<String, String>,
-    pub data: HashMap<String, Value>,
-    pub old: HashMap<String, Value>
+    pub data: Vec<HashMap<String, Value>>,
+    pub old: Vec<HashMap<String, Value>>
 }
 
 impl DmlMessage {
-    fn from_dml(dml: DmlData, fields: &Vec<FieldMeta>) -> Self {
+    fn from_dml(mut dml: DmlData, fields: &mut Vec<FieldMeta>) -> Self {
         let mut ins = Self::new(dml.id, dml.database, dml.table, dml.dml_type, dml.es);
         let mut pks: Vec<String> = Vec::new();
-        for (idx, val) in dml.data.iter().enumerate(){
-            if let Some(meta) = fields.get(idx){
-                ins.mysqlType.insert(meta.name.clone(), meta.field_type.clone());
-                ins.data.insert(meta.name.clone(), val.clone().take());
-                if meta.is_pk {
-                    pks.insert(0, meta.name.clone());
+
+        for vals in dml.data.iter_mut(){
+            let mut record:HashMap<String, Value> = HashMap::new();
+            for (idx, val) in vals.iter().enumerate(){
+                if let Some(meta) = fields.get_mut(idx){
+                    ins.mysqlType.insert(meta.name.clone(), meta.field_type.clone());
+                    let sql_tp = meta.get_sql_type();
+                    ins.sqlType.insert(meta.name.clone(), sql_tp);
+                    if sql_tp == 2005 {
+                        let val_s = match val.as_array(){
+                            Some(s)=>{String::from_utf8_lossy(s.iter().map(|n| n.as_u64().unwrap() as u8).collect::<Vec<u8>>().as_slice()).to_string()},
+                            None=>String::from("")
+                        };
+                        record.insert(meta.name.clone(), Value::from(val_s));
+                    }else{
+                        if sql_tp == 2004 {
+                            let val_s = match val.as_array(){
+                                Some(s)=>{ String::from_utf16(s.iter().map(|n| n.as_u64().unwrap() as u16).collect::<Vec<u16>>().as_slice()).unwrap()},
+                                None=>String::from("")
+                            };
+                            record.insert(meta.name.clone(), Value::from(val_s));
+                        }else {
+                            record.insert(meta.name.clone(), val.clone());
+                        }
+                    }
+
+                    if meta.is_pk {
+                        if !pks.contains(&meta.name){
+                            pks.insert(0, meta.name.clone());
+                        }
+                    }
                 }
             }
+            ins.data.push(record);
         }
-        for (idx, val) in dml.old_data.iter().enumerate() {
-            if let Some(meta) = fields.get(idx){
-                ins.old.insert(meta.name.clone(), val.clone().take());
+        for vals in dml.old_data.iter_mut() {
+            let mut record:HashMap<String, Value> = HashMap::new();
+            for (idx, val) in vals.iter().enumerate() {
+                if let Some(meta) = fields.get(idx){
+                    record.insert(meta.name.clone(), val.clone().take());
+                }
             }
+            ins.old.push(record)
         }
-        ins.pkNames = pks.join(" ");
+        ins.pkNames.extend_from_slice(pks.as_slice());
         ins
     }
 
     fn new(mid: u64, database: String, table: String, dml_type: String, es: u64) -> Self{
-        let start = SystemTime::now();
-        let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
-        let ts = since_the_epoch.as_secs();
+        let ts = current_ms_ts();
         Self{
             id: mid,
             database,
             table,
-            pkNames: "id".to_string(),
+            pkNames: vec![],
             isDdl: false,
             r#type: dml_type,
             es,
             ts,
             sql: None,
-            sqlType: None,
+            sqlType: HashMap::new(),
             mysqlType: HashMap::new(),
-            data: HashMap::new(),
-            old: HashMap::new(),
+            data: Vec::new(),
+            old: Vec::new(),
         }
     }
 }
@@ -123,6 +158,58 @@ pub struct FieldMeta {
     pub field_type: String,
     pub is_pk: bool
 }
+
+impl FieldMeta{
+    pub fn get_sql_type(&mut self) -> i16 {
+        if self.field_type.starts_with("tinyint") {
+            return -6;
+        }
+        if self.field_type.starts_with("smallint") {
+            return 5;
+        }
+        if self.field_type.starts_with("mediumint") || self.field_type.starts_with("int") {
+            return 4
+        }
+        if self.field_type.starts_with("bigint") {
+            return 5;
+        }
+        if self.field_type.starts_with("float") {
+            return 7;
+        }
+        if self.field_type.starts_with("double") {
+            return 8;
+        }
+        if self.field_type.starts_with("decimal") {
+            return 3;
+        }
+        if self.field_type.eq("date") {
+            return 91;
+        }
+        if self.field_type.eq("time") {
+            return 92;
+        }
+        if self.field_type.starts_with("year") {
+            return 12;
+        }
+        if self.field_type.eq("datetime") || self.field_type.eq("timestamp") {
+            return 93
+        }
+        if self.field_type.starts_with("char") {
+            return 1;
+        }
+        if self.field_type.starts_with("varchar") {
+            return 12;
+        }
+        if self.field_type.ends_with("blob") {
+            return 2004;
+        }
+        if self.field_type.ends_with("text") {
+            return 2005;
+        }
+        -999
+    }
+}
+
 
 #[derive(Clone)]
 struct TableMetaMapping {
@@ -230,9 +317,9 @@ fn worker_body(thread_id: usize, rx: Receiver<DmlData>, mapping: &mut TableMetaM
                 continue;
             }
 
-            let meta = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone());
+            let mut meta = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone());
             //println!("\n\n table fields meta:{meta:?}");
-            let message = DmlMessage::from_dml(data, &meta);
+            let message = DmlMessage::from_dml(data, &mut meta);
             if let Ok(json_message) = serde_json::to_string(&message) {
                 //println!("Canal JSON:\n{}", &json_message);
                 for (mq_name, topic) in ports {

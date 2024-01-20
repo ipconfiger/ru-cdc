@@ -260,13 +260,6 @@ pub fn take_var_string(i: &[u8]) -> IResult<&[u8], String, ParseError> {
 }
 
 pub fn take_eof_string(i: &[u8]) -> IResult<&[u8], String, ParseError> {
-    // let rs = String::from_utf8(Vec::from(i));
-    // if let Err(ex) = rs {
-    //     println!("utf8 format error: {ex:?}");
-    //     Err(err_maker(i, ErrorKind::Char))
-    // }else {
-    //     Ok((&[], rs.expect("no error")))
-    // }
     Ok((&[], String::from_utf8_lossy(i).to_string()))
 }
 
