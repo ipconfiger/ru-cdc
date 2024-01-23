@@ -134,7 +134,7 @@ impl MySQLConnection {
 
     pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>) -> bool {
         let sql = format!("desc {db}.{table}");
-        println!("{}", &sql);
+        //println!("{}", &sql);
         let query = ComQuery{query: sql};
         self.write_package(0, &query);
         if let Ok(text_resp) = self.read_text_result_set() {

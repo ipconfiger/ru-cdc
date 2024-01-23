@@ -14,7 +14,7 @@ use std::{
 use bytes::BytesMut;
 use nom::AsBytes;
 use crate::binlog::{DeleteRowEvent, EventHeader, EventRaw, QueryEvent, RotateEvent, TableMap, TableMapEvent, UpdateRowEvent, WriteRowEvent};
-use crate::executor::{DmlData, Workers};
+use crate::executor::{DmlData, RowEvents, Workers};
 use crate::mysql::{Decoder, MySQLConnection, native_password_auth, Packet};
 use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ComBinLogDump, ComQuery, HandshakeResponse41, HandshakeV10, OkPacket};
 use clap::{Arg, App};
@@ -84,75 +84,27 @@ fn serve(cfg_path: &String) {
         filename: file,
     };
     conn.write_package(0, &dump).unwrap();
-    let mut table_map = TableMap::new();
-    let mut current_data:Option<DmlData> = None;
+    let mut current_packet: Option<RowEvents> = None;
 
     let mut worker = Workers::new();
-    worker.start(7usize, mq.clone(), config.clone().instances, config.clone());
+    worker.start(config.workers as usize, mq.clone(), config.clone().instances, config.clone());
     let mut seq_idx:u64 = 0;
     let mut statistics= Statistics::new();
-
-
     loop {
         let (_, buf) = conn.read_package::<Vec<u8>>().unwrap();
         statistics.feed_bytes(buf.payload.len());
         let event_result = EventRaw::decode(buf.payload.as_bytes());
-
         if let Ok((_, ev)) = event_result {
             if ev.header.event_type == 19 {
-                let (i, tablemap) = TableMapEvent::decode(ev.payload.as_bytes()).expect("table map error");
-                table_map.decode_columns(tablemap.header.table_id, tablemap.column_types, tablemap.column_metas.as_bytes());
-                current_data = Some(DmlData::new_data(tablemap.header.table_id as u32, tablemap.schema_name.clone(), tablemap.table_name.clone()));
+                current_packet = Some(RowEvents::new(ev.clone()))
             }
-            if ev.header.event_type == 30 {
-                let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let (i, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
-                if let Some(ref mut data) = current_data {
-                    data.append_data(seq_idx, "INSERT".to_string(), rows, Vec::new(), ev.header.log_pos);
-                    &worker.push(data);
+            if vec![30u8, 31u8, 32u8, 4u8].contains(&ev.header.event_type) {
+                if let Some(ref mut cp) = current_packet {
+                    cp.append(ev.clone(), seq_idx);
+                    &worker.push(cp);
                     seq_idx += 1;
-                } else {
-                    println!("=====> no DML instance");
                 }
             }
-            if ev.header.event_type == 31{
-                let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let (rest_i, (old_val, new_val)) = match UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len){
-                    Ok((i, (old_values, new_values)))=> (i, (old_values, new_values)),
-                    Err(err)=>{
-                        if let Some(ref mut data) = current_data {
-                            println!("exec table:{} fail with: {err:?}", data.table);
-                        }
-                        panic!("{err:?}")
-                    }
-                };
-                if let Some(ref mut data) = current_data {
-                    data.append_data(seq_idx, "UPDATE".to_string(), new_val, old_val, ev.header.log_pos);
-                    &worker.push(data);
-                    seq_idx += 1;
-                }else{
-                    println!("=====> no DML instance");
-                }
-            }
-            if ev.header.event_type == 32{
-                let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                let (i, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
-                //println!("======>Old val:{old_values:?} \n Rest update bytes: {i:?}");
-                if let Some(ref mut data) = current_data {
-                    data.append_data(seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
-                    &worker.push(data);
-                    seq_idx += 1;
-                }else{
-                    println!("=====> no DML instance");
-                }
-            }
-            if ev.header.event_type == 16 {
-            }
-            if ev.header.event_type == 4 {
-                let (i, rotate) = RotateEvent::decode(ev.payload.as_bytes()).unwrap();
-                update_name_pos(posMng.clone(), &rotate.binlog_name, rotate.position as u32);
-            }
-
         }
 
     }

@@ -8,8 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rand::Rng;
 use crate::config::{Config, Instance};
 use crate::message_queue::{MessageQueues, QueueMessage};
-use crate::mysql::MySQLConnection;
+use crate::mysql::{Decoder, MySQLConnection};
 use std::sync::mpsc::{channel, Sender, Receiver};
+use nom::AsBytes;
+use crate::binlog::{DeleteRowEvent, EventRaw, TableMap, TableMapEvent, UpdateRowEvent, WriteRowEvent};
 
 fn current_ms_ts() -> u128 {
     let now = SystemTime::now();
@@ -27,6 +29,25 @@ pub fn generate_random_number() -> u32 {
     let mut rng = rand::thread_rng();
     rng.gen_range(1..=7)
 }
+
+#[derive(Debug, Clone)]
+pub struct RowEvents {
+    pub table_map: EventRaw,
+    pub row_event: Option<EventRaw>,
+    pub seq_idx: u64
+}
+
+impl RowEvents {
+    pub fn new(table_map: EventRaw) -> Self {
+        Self{ table_map, row_event: None, seq_idx:0 }
+    }
+    pub fn append(&mut self, ev: EventRaw, idx: u64) {
+        self.row_event = Some(ev);
+        self.seq_idx = idx;
+    }
+}
+
+
 
 #[derive(Debug, Clone)]
 pub struct DmlData {
@@ -235,7 +256,7 @@ impl TableMetaMapping {
             if let Ok(mut mp) = self.mapping.lock() {
                 if !mp.contains_key(&tid) {
                     let mut cols = Vec::new();
-                    println!("Check Mapping {tid} {db} {table} in {:?}", mp.contains_key(&tid));
+                    //println!("Check Mapping {tid} {db} {table} in {:?}", mp.contains_key(&tid));
                     if conn.desc_table(db.clone(), table.clone(), &mut cols){
                         mp.insert(tid, cols.clone());
                         return Ok(cols.clone());
@@ -262,16 +283,16 @@ impl TableMetaMapping {
 
 #[derive(Debug)]
 struct Pool {
-    pub tx_channel : HashMap<u32, Arc<Mutex<Sender<DmlData>>>>
+    pub tx_channel : HashMap<u32, Arc<Mutex<Sender<RowEvents>>>>
 }
 
 impl Pool {
-    pub fn regist_tx(&mut self, key: u32, tx: Arc<Mutex<Sender<DmlData>>>) {
+    pub fn regist_tx(&mut self, key: u32, tx: Arc<Mutex<Sender<RowEvents>>>) {
         self.tx_channel.insert(key, tx);
     }
 
-    pub fn push(&mut self, data: &DmlData) {
-        let i = ((data.id + 1) % self.tx_channel.len() as u64) as u32;
+    pub fn push(&mut self, data: &RowEvents) {
+        let i = ((data.seq_idx + 1) % self.tx_channel.len() as u64) as u32;
         if let Some(tx_ref) = self.tx_channel.get_mut(&i) {
             if let Ok(tx) = tx_ref.lock(){
                 tx.send(data.clone()).expect("send error");
@@ -297,7 +318,7 @@ impl Workers {
 
         let mut mapping = TableMetaMapping::new();
         for thread_id in 0..size {
-            let (tx, rx) = channel::<DmlData>();
+            let (tx, rx) = channel::<RowEvents>();
             let tx = Arc::new(Mutex::new(tx));
             self.pool.regist_tx(thread_id as u32, tx);
             let mut the_mapping = mapping.clone();
@@ -311,21 +332,23 @@ impl Workers {
         }
     }
 
-    pub fn push(&mut self, data: &DmlData) {
+    pub fn push(&mut self, data: &RowEvents) {
         self.pool.push(data);
     }
 }
 
-fn worker_body(thread_id: usize, rx: Receiver<DmlData>, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
+fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
     println!("[t:{thread_id}] Worker Started");
+    let mut table_map = TableMap::new();
     let mut conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name, config.passwd);
     loop {
         if let Ok(data) = rx.recv() {
             let mut ports: Vec<(String, String)> = Vec::new();
-            let pos = data.pos;
-
+            let (_, tablemap) = TableMapEvent::decode(data.table_map.payload.as_slice()).expect("table map error");
+            table_map.decode_columns(tablemap.header.table_id, tablemap.column_types, tablemap.column_metas.as_bytes());
+            let mut current_data = DmlData::new_data(tablemap.header.table_id as u32, tablemap.schema_name.clone(), tablemap.table_name.clone());
             for instance in instances.iter_mut(){
-                if let Some((mq_name, topic)) = instance.check_if_need_a_mq(data.database.clone(), data.table.clone()) {
+                if let Some((mq_name, topic)) = instance.check_if_need_a_mq(current_data.database.clone(), current_data.table.clone()) {
                     ports.push((mq_name, topic));
                 }
             }
@@ -333,18 +356,45 @@ fn worker_body(thread_id: usize, rx: Receiver<DmlData>, mapping: &mut TableMetaM
                 //println!("未匹配到实例：{}.{}", &data.database, &data.table);
                 continue;
             }
-            if let Ok(mut meta) = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone()) {
-                if meta.len() == 0usize {
-                    println!("表{}.{} 不存在", data.database, data.table);
-                    continue
+            if let Some(ev) = data.row_event {
+                let pos = ev.header.log_pos;
+                if ev.header.event_type == 30 {
+                    let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                    let (_, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
+                    current_data.append_data(data.seq_idx, "INSERT".to_string(), rows, Vec::new(), ev.header.log_pos);
                 }
-                let message = DmlMessage::from_dml(data, &mut meta);
-                if let Ok(json_message) = serde_json::to_string(&message) {
-                    //println!("Canal JSON:\n{}", &json_message);
-                    for (mq_name, topic) in ports {
-                        let msg_qu = QueueMessage { topic, payload: json_message.clone(), pos };
-                        queue.push(&mq_name, msg_qu);
+                if ev.header.event_type == 31{
+                    let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                    let (_, (old_val, new_val)) = match UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len){
+                        Ok((i, (old_values, new_values)))=> (i, (old_values, new_values)),
+                        Err(err)=>{
+                            println!("exec table:{} fail with: {err:?}", current_data.table);
+                            panic!("{err:?}")
+                        }
+                    };
+                    current_data.append_data(data.seq_idx, "UPDATE".to_string(), new_val, old_val, ev.header.log_pos);
+                }
+                if ev.header.event_type == 32{
+                    let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                    let (_, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
+                    current_data.append_data(data.seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
+                }
+                if vec![32u8, 31u8, 30u8].contains(&ev.header.event_type) {
+                    if let Ok(mut meta) = mapping.update_mapping(&mut conn, current_data.table_id, current_data.database.clone(), current_data.table.clone()) {
+                        if meta.len() == 0usize {
+                            println!("表{}.{} 不存在", current_data.database, current_data.table);
+                            continue
+                        }
+                        let message = DmlMessage::from_dml(current_data, &mut meta);
+                        if let Ok(json_message) = serde_json::to_string(&message) {
+                            //println!("Canal JSON:\n{}", &json_message);
+                            for (mq_name, topic) in ports {
+                                let msg_qu = QueueMessage { topic, payload: json_message.clone(), pos };
+                                queue.push(&mq_name, msg_qu);
+                            }
+                        }
                     }
+
                 }
             }
         }

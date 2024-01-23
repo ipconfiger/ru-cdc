@@ -18,7 +18,7 @@ impl Statistics {
         let ts = current_ts() / 1000;
         self.all_bytes += bytes_count as u128;
         if self.last_checkpoint > 0 {
-            if ts - self.last_checkpoint > 20 {
+            if ts - self.last_checkpoint > 5 {
                 let rest_bytes = self.all_bytes - self.check_bytes;
                 let time_used = ts - self.last_checkpoint;
                 let byte_rate = rest_bytes / time_used as u128;
