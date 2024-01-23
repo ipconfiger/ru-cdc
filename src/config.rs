@@ -1,7 +1,9 @@
 use std::env;
 use dirs;
 use std::path::{Path, PathBuf};
+use nom::combinator::into;
 use serde::{Serialize, Deserialize};
+use serde_json::to_string;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KafkaConfig {
@@ -32,12 +34,18 @@ pub struct Instance {
     pub mq: String,
     pub schemas: String,
     pub tables: String,
+    pub black_list: Vec<String>,
     pub topic: String
 }
 
 impl Instance {
     pub fn check_if_need_a_mq(&mut self, db: String, table: String) -> Option<(String, String)> {
         if match_pattern(self.schemas.as_str(), db.as_str()) {
+            for p in &self.black_list{
+                if match_pattern(p.as_str(), table.as_str()){
+                    return None
+                }
+            }
             if match_pattern(self.tables.as_str(), table.as_str()) {
                 return Some((self.mq.clone(), self.topic.clone()));
             }
@@ -71,6 +79,7 @@ pub struct Config {
     pub user_name: String,
     pub passwd: String,
     pub workers: u8,
+    pub from_start: Option<bool>,
     pub mqs: Vec<Mq>,
     pub instances: Vec<Instance>
 }
@@ -112,11 +121,13 @@ impl Config {
             user_name: "canal".to_string(),
             passwd: "canal".to_string(),
             workers: 0,
+            from_start: Some(false),
             mqs: vec![Mq{ mq_name: "the_kafka".to_string(), mq_cfg: MqConfig::KAFKA(KafkaConfig{ brokers: "127.0.0.1:9092".to_string(), queue_buffering_max: 333 }) }],
             instances: vec![Instance{
                 mq: "the_kafka".to_string(),
                 schemas: "test*".to_string(),
                 tables: "s*".to_string(),
+                black_list: vec!["tb01".to_string(), "tb02".to_string()],
                 topic: "db_change".to_string(),
             }],
         }

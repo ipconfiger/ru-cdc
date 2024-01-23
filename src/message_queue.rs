@@ -7,12 +7,14 @@ use crate::config::{KafkaConfig, Mq, MqConfig, RedisConfig};
 use redis::{AsyncCommands, Client, Commands};
 use crate::executor::generate_random_number;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use crate::position_manager::{PositionMng, update_pos};
 
 
 #[derive(Debug, Clone)]
 pub struct QueueMessage {
     pub topic: String,
-    pub payload: String
+    pub payload: String,
+    pub pos: u32
 }
 
 
@@ -42,13 +44,14 @@ impl MessageQueues {
         }
     }
 
-    pub fn start_message_queue_from_config(&mut self, queue_cfg: Vec<Mq>) {
+    pub fn start_message_queue_from_config(&mut self, queue_cfg: Vec<Mq>, posMng: Arc<Mutex<PositionMng>>) {
         let queue_cfg = queue_cfg.clone();
         for cfg in queue_cfg {
             let (tx, rx) = channel();
             let tx = Arc::new(Mutex::new(tx));
             self.register_tx(&cfg.mq_name, tx);
             let config = cfg.clone();
+            let posMng = posMng.clone();
             thread::spawn(move || {
                 println!("Outgiving thread [{}]", &cfg.mq_name);
                 let mut mq_ins: Box<dyn QueueClient> = match config.mq_cfg {
@@ -61,17 +64,18 @@ impl MessageQueues {
                         Box::new(rd)
                     }
                 };
-                outgiving_body(rx, mq_ins.as_mut());
+                outgiving_body(rx, mq_ins.as_mut(), posMng);
             });
 
         }
     }
 }
 
-fn outgiving_body(rx: Receiver<QueueMessage>, mq_ins: &mut dyn QueueClient) {
+fn outgiving_body(rx: Receiver<QueueMessage>, mq_ins: &mut dyn QueueClient, posMng: Arc<Mutex<PositionMng>>) {
     loop{
         if let Ok(msg) = rx.recv() {
             mq_ins.queue_message(&msg);
+            update_pos(posMng.clone(), msg.pos);
         }
     }
 }

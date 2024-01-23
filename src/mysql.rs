@@ -3,12 +3,10 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
-use nom::error::ErrorKind;
-use serde::de::Unexpected::Str;
+use nom::error::{ErrorKind, Error, VerboseError, VerboseErrorKind};
+use nom::Err as NomErr;
 use crate::executor::FieldMeta;
-use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, err_maker, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
-
-pub(crate) type ParseError<'a> = error::Error<&'a [u8]>;
+use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
 
 
 pub struct MySQLConnection {
@@ -58,22 +56,40 @@ impl MySQLConnection {
         conn
     }
 
-    pub fn read_package<P:Decoder+Debug>(&mut self) -> Result<(&[u8], Packet<P>), Err<ParseError<'_>>> {
+    pub fn read_package<P:Decoder+Debug+Clone>(&mut self) -> IResult<&[u8], Packet<P>> {
         let mut buff = BytesMut::new();
         buff.resize(4, 0);
-        self.conn.read_exact(&mut buff).expect("read error");
-        let (_, header) = Header::decode(buff.chunk()).expect("");
-        //println!("header:{:?}", header);
-        let mut buff = BytesMut::with_capacity(header.len as usize);
-        buff.resize(header.len as usize, 0);
-        self.conn.read_exact(&mut buff).expect("read body error");
-        //println!("body pack:{:?}", buff.to_vec());
-        let (_, payload) =  P::decode(buff.chunk()).expect("");
-        Ok((&[], Packet { header, payload}))
+        if let Ok(_) = self.conn.read_exact(&mut buff) {
+            let header = match Header::decode(buff.chunk()){
+                Ok((_, hd))=>hd,
+                Err(err)=>{
+                    return Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)));
+                }
+            };
+            //println!("header:{:?}", header);
+            let mut buff = BytesMut::with_capacity(header.len as usize);
+            buff.resize(header.len as usize, 0);
+            if let Ok(_) = self.conn.read_exact(&mut buff) {
+                //println!("body pack:{:?}", buff.to_vec());
+                match P::decode(buff.chunk()){
+                    Ok((_, payload)) => Ok((&[], Packet { header, payload })),
+                    Err(err)=>Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)))
+                }
+            }else{
+                Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Eof)))
+            }
+        }else{
+            Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Eof)))
+        }
     }
 
-    pub fn read_text_result_set(&mut self) -> Result<(&[u8], TextResultSet), Err<ParseError<'_>>> {
-        let column_count = self.read_package::<VLenInt>().expect("column count error").1.payload;
+    pub fn read_text_result_set(&mut self) -> Result<TextResultSet, ()> {
+
+        let column_count_packet = self.read_package::<VLenInt>();
+        if column_count_packet.is_err(){
+            return Err(());
+        }
+        let column_count= column_count_packet.unwrap().1.payload;
         let mut col_defs = vec![];
         for _ in 0.. column_count.0 as usize {
             let col = self.read_package::<ColDef>().expect("read col def error").1.payload;
@@ -100,11 +116,11 @@ impl MySQLConnection {
             //println!("row: {:?}", &row);
             rows.push(row);
         }
-        Ok((&[], TextResultSet {
+        Ok(TextResultSet {
             column_count,
             col_defs,
             rows,
-        }))
+        })
     }
 
     pub fn write_package<P:Encoder+Debug>(&mut self,
@@ -116,74 +132,107 @@ impl MySQLConnection {
         self.conn.write_all(&buff)
     }
 
-    pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>) {
+    pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>) -> bool {
         let sql = format!("desc {db}.{table}");
+        println!("{}", &sql);
         let query = ComQuery{query: sql};
         self.write_package(0, &query);
-        let (_, text_resp) = self.read_text_result_set().unwrap();
-        for row in text_resp.rows {
-            let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
-            let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
-            let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
-            let meta = FieldMeta{
-                name,
-                field_type,
-                is_pk: !pk.is_empty(),
-            };
-            col_meta.push(meta);
+        if let Ok(text_resp) = self.read_text_result_set() {
+            for row in text_resp.rows {
+                let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
+                let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
+                let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
+                let meta = FieldMeta {
+                    name,
+                    field_type,
+                    is_pk: Self::check_pk(&pk),
+                };
+                col_meta.push(meta);
+            }
+            true
+        }else{
+            println!("DESC fault!");
+            false
+        }
+    }
+    fn check_pk(pk_field: &String) -> bool {
+        if pk_field.is_empty(){
+            false
+        }else{
+            pk_field.starts_with("PRI")
         }
     }
 }
 
 
-pub fn take_int1(i: &[u8])->IResult<&[u8], u8, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(1)(i)?;
+pub fn take_int1(i: &[u8])->IResult<&[u8], u8> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(1)(i)?;
     Ok((i, n_bytes[0]))
 }
 
-pub fn take_int2(i: &[u8])->IResult<&[u8], u16, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(2)(i)?;
+pub fn take_int2(i: &[u8])->IResult<&[u8], u16> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(2)(i)?;
     let mut bs = [0u8; 2];
     bs.copy_from_slice(n_bytes);
     Ok((i, u16::from_le_bytes(bs)))
 }
 
-pub fn take_int3(i: &[u8])->IResult<&[u8], u32, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(3)(i)?;
+pub fn take_int3(i: &[u8])->IResult<&[u8], u32>  {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(3)(i)?;
     Ok((i, u32::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], 0])))
 }
 
-pub fn take_int4(i: &[u8])->IResult<&[u8], u32, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(4)(i)?;
+pub fn take_i_int3(i: &[u8])->IResult<&[u8], i32>  {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(3)(i)?;
+    Ok((i, i32::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], 0])))
+}
+
+
+pub fn take_int4(i: &[u8])->IResult<&[u8], u32> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(4)(i)?;
     let mut bs = [0u8; 4];
     bs.copy_from_slice(n_bytes);
     Ok((i, u32::from_le_bytes(bs)))
 }
 
-pub fn take_int5(i: &[u8])->IResult<&[u8], u64, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(5)(i)?;
+pub fn take_i_int4(i: &[u8])->IResult<&[u8], i32> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(4)(i)?;
+    let mut bs = [0u8; 4];
+    bs.copy_from_slice(n_bytes);
+    Ok((i, i32::from_le_bytes(bs)))
+}
+
+pub fn take_int5(i: &[u8])->IResult<&[u8], u64>  {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(5)(i)?;
     Ok((i, u64::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3], n_bytes[4], 0, 0, 0])))
 }
 
-pub fn take_int6(i: &[u8])->IResult<&[u8], u64, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(6)(i)?;
+pub fn take_int6(i: &[u8])->IResult<&[u8], u64>  {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(6)(i)?;
     Ok((i, u64::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3], n_bytes[4], n_bytes[5], 0, 0])))
 }
 
-pub fn take_int7(i: &[u8])->IResult<&[u8], u64, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(7)(i)?;
+pub fn take_int7(i: &[u8])->IResult<&[u8], u64> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(7)(i)?;
     Ok((i, u64::from_le_bytes([n_bytes[0], n_bytes[1], n_bytes[2], n_bytes[3], n_bytes[4], n_bytes[5], n_bytes[6], 0])))
 }
 
-pub fn take_int8(i: &[u8])->IResult<&[u8], u64, ParseError> {
-    let (i, n_bytes) = complete::take::<usize, &[u8], ParseError>(8)(i)?;
+pub fn take_int8(i: &[u8])->IResult<&[u8], u64> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(8)(i)?;
     let mut bs = [0u8; 8];
     bs.copy_from_slice(n_bytes);
     Ok((i, u64::from_le_bytes(bs)))
 }
 
+pub fn take_i_int8(i: &[u8])->IResult<&[u8], i64> {
+    let (i, n_bytes) = complete::take::<usize, &[u8], Error<&[u8]>>(8)(i)?;
+    let mut bs = [0u8; 8];
+    bs.copy_from_slice(n_bytes);
+    Ok((i, i64::from_le_bytes(bs)))
+}
 
-pub fn take_int_n(i: &[u8], n: usize) -> IResult<&[u8], u64, ParseError> {
+
+pub fn take_int_n(i: &[u8], n: usize) -> IResult<&[u8], u64>  {
     let (i, u) = match n {
         1usize=>{
             let (i, v) = take_int1(i)?;
@@ -210,7 +259,7 @@ pub fn take_int_n(i: &[u8], n: usize) -> IResult<&[u8], u64, ParseError> {
     Ok((i, u as u64))
 }
 
-pub fn take_be_int(i: &[u8], n: usize) -> IResult<&[u8], i64, ParseError>{
+pub fn take_be_int(i: &[u8], n: usize) -> IResult<&[u8], i64> {
     let (i, bs) = take_bytes(i, n)?;
     //println!("======> ms bs:{bs:?} of n:{n}");
     if n == 2 {
@@ -231,44 +280,44 @@ pub fn take_be_int(i: &[u8], n: usize) -> IResult<&[u8], i64, ParseError>{
     }))
 }
 
-pub fn take_utf8_end_of_null(i: &[u8])->IResult<&[u8], String, ParseError> {
+pub fn take_utf8_end_of_null(i: &[u8])->IResult<&[u8], String>  {
     let (i, str_bytes) = complete::take_while(|b|{ b != b'\0' })(i)?;
-    let (i, _) = complete::take::<usize, &[u8], ParseError>(1)(i)?;
+    let (i, _) = complete::take::<usize, &[u8], Error<&[u8]>>(1)(i)?;
     Ok((i, String::from_utf8(Vec::from(str_bytes)).unwrap_or_else(|e| "".to_string())))
 }
 
 
-pub fn take_bytes(i: &[u8], size:usize) -> IResult<&[u8], &[u8], ParseError> {
-    let (i, bs) = complete::take::<usize, &[u8], ParseError>(size)(i)?;
+pub fn take_bytes(i: &[u8], size:usize) -> IResult<&[u8], &[u8]>  {
+    let (i, bs) = complete::take::<usize, &[u8], Error<&[u8]>>(size)(i)?;
     Ok((i, bs))
 }
 
-pub fn take_var_bytes(i: &[u8]) ->IResult<&[u8], &[u8], ParseError> {
+pub fn take_var_bytes(i: &[u8]) -> IResult<&[u8], &[u8]> {
     let (i, len) = VLenInt::decode(i)?;
     let (i, bs) = take_bytes(i, len.0 as usize)?;
     Ok((i, bs))
 }
 
-pub fn take_var_string(i: &[u8]) -> IResult<&[u8], String, ParseError> {
+pub fn take_var_string(i: &[u8]) -> IResult<&[u8], String> {
     let (i, bs) = take_var_bytes(i)?;
     let rs = String::from_utf8(Vec::from(bs));
     if let Err(ex) = rs {
-        Err(err_maker(i, ErrorKind::Char))
+        Err(NomErr::Error(Error::new(i, ErrorKind::Eof)))
     }else {
         Ok((i, rs.expect("no error")))
     }
 }
 
-pub fn take_eof_string(i: &[u8]) -> IResult<&[u8], String, ParseError> {
+pub fn take_eof_string(i: &[u8]) -> IResult<&[u8], String> {
     Ok((&[], String::from_utf8_lossy(i).to_string()))
 }
 
-pub fn take_fix_string(i: &[u8], len:usize) -> IResult<&[u8], String, ParseError> {
+pub fn take_fix_string(i: &[u8], len:usize) -> IResult<&[u8], String> {
     let (i, str_bytes) = take_bytes(i, len)?;
     Ok((i, String::from_utf8(Vec::from(str_bytes)).unwrap_or_else(|e| "".to_string())))
 }
 
-pub fn read_fps(i: &[u8], fps: u8) -> IResult<&[u8], u32, ParseError> {
+pub fn read_fps(i: &[u8], fps: u8) -> IResult<&[u8], u32> {
     let read = match fps {
         1|2=>1,
         3|4=>2,
@@ -320,7 +369,7 @@ pub struct Header {
 }
 
 impl Decoder for Header {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized{
+    fn decode(input: &[u8]) -> IResult<&[u8], Self>{
         let (input, len) = take_int3(input)?;
         let (ip, serial_id) = take_int1(input)?;
         Ok((&[], Header{len, serial_id:serial_id as u32}))
@@ -346,11 +395,11 @@ pub fn encode_package<P: Encoder>( buf: &mut BytesMut, serial_id: u8, payload: &
 
 
 pub trait Decoder {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized;
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized;
 }
 
 impl Decoder for Vec<u8> {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         Ok((&[], Vec::from(input)))
     }
 }

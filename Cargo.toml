@@ -19,3 +19,4 @@ dirs = "3.0.2"
 rdkafka = { version = "0.33.2", default-features = false, features = ["cmake-build"] }
 redis = { version = "0.23", features = ["tokio-comp"] }
 hex = "0.4"
+byteorder = "1.4.3"

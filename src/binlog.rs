@@ -1,13 +1,103 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use bitflags::Flags;
-use nom::error::ErrorKind;
-use nom::{AsBytes, AsChar, IResult};
-use serde_json::{json, Value, from_slice, to_vec};
-use crate::mysql::{Decoder, ParseError, read_fps, take_be_int, take_bytes, take_eof_string, take_fix_string, take_int1, take_int2, take_int3, take_int4, take_int6, take_int8, take_int_n, take_utf8_end_of_null};
-use crate::protocal::{err_maker, VLenInt};
-use nom::Err;
-use redis::FromRedisValue;
+use bytes::BytesMut;
+use nom::error::{Error, ErrorKind, VerboseError, VerboseErrorKind};
+use nom::{AsBytes, AsChar, IResult, Err as NomErr};
+use serde_json::{Value};
+use crate::mysql::{Decoder, read_fps, take_bytes, take_eof_string, take_fix_string, take_i_int3, take_i_int4, take_i_int8, take_int1, take_int2, take_int3, take_int4, take_int6, take_int8, take_int_n, take_utf8_end_of_null};
+use crate::protocal::{ VLenInt};
+use std::io::{Cursor};
+use byteorder::{BigEndian, ReadBytesExt};
+
+
+const DIG_PER_DEC: usize = 9;
+const COMPRESSED_BYTES: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
+
+struct DecimalVal {
+    val: String
+}
+
+impl DecimalVal {
+    fn decode(input: &[u8], precision: u8, scale: u8) -> IResult<&[u8], Self> {
+        let integral = precision - scale;
+        let uncomp_intg = integral / DIG_PER_DEC as u8;
+        let uncomp_frac = scale / DIG_PER_DEC as u8;
+        let comp_intg = integral - (uncomp_intg * DIG_PER_DEC as u8);
+        let comp_frac = scale - (uncomp_frac * DIG_PER_DEC as u8);
+
+        let comp_frac_bytes = COMPRESSED_BYTES[comp_frac as usize];
+        let comp_intg_bytes = COMPRESSED_BYTES[comp_intg as usize];
+
+        let total_bytes = 4 * uncomp_intg + 4 * uncomp_frac + comp_frac_bytes as u8 + comp_intg_bytes as u8;
+
+        let (rest, decimal_bs) = take_bytes(input, total_bytes as usize)?;
+        let is_negative = (decimal_bs[0] & 0x80) == 0;
+        let mut bs = BytesMut::new();
+        bs.resize(total_bytes as usize, 0);
+        bs.extend_from_slice(decimal_bs);
+
+        bs[0] ^= 0x80;
+        if is_negative {
+            for i in 0..total_bytes {
+                bs[i as usize] ^= 0xFF;
+            }
+        }
+        let mut intg_str = String::new();
+        if is_negative {
+            intg_str = "-".to_string();
+        }
+        let mut decimal_cursor = Cursor::new(bs.as_bytes());
+        let mut is_intg_empty = true;
+        // compressed integral
+        if comp_intg_bytes > 0 {
+            let value = decimal_cursor.read_uint::<BigEndian>(comp_intg_bytes).unwrap();
+            if value > 0 {
+                intg_str += value.to_string().as_str();
+                is_intg_empty = false;
+            }
+        }
+
+        // uncompressed integral
+        for _ in 0..uncomp_intg {
+            let value = decimal_cursor.read_u32::<BigEndian>().unwrap();
+            if is_intg_empty {
+                if value > 0 {
+                    intg_str += value.to_string().as_str();
+                    is_intg_empty = false;
+                }
+            } else {
+                intg_str += format!("{value:0size$}", value = value, size = DIG_PER_DEC).as_str();
+            }
+        }
+
+        if is_intg_empty {
+            intg_str += "0";
+        }
+
+        let mut frac_str = String::new();
+        // uncompressed fractional
+        for _ in 0..uncomp_frac {
+            let value = decimal_cursor.read_u32::<BigEndian>().unwrap();
+            frac_str += format!("{value:0size$}", value = value, size = DIG_PER_DEC).as_str();
+        }
+
+        // compressed fractional
+        if comp_frac_bytes > 0 {
+            let value = decimal_cursor.read_uint::<BigEndian>(comp_frac_bytes).unwrap();
+            frac_str += format!("{value:0size$}", value = value, size = comp_frac as usize).as_str();
+        }
+
+        if frac_str.is_empty() {
+            Ok((rest, Self{ val: intg_str }))
+        } else {
+            Ok((rest, Self{ val: intg_str + "." + frac_str.as_str() }))
+        }
+
+
+    }
+}
+
 
 fn parse_bcd(input: &[u8], digits: usize) -> String {
     input.iter().flat_map(|&byte| {
@@ -107,7 +197,7 @@ impl From<u8> for ColumnType {
 }
 
 impl ColumnType {
-    fn decode_val<'a>(tp: ColumnType, input: &'a [u8], meta: &ColMeta) -> IResult<&'a [u8], Value, ParseError<'a>> {
+    fn decode_val<'a>(tp: ColumnType, input: &'a [u8], meta: &ColMeta) -> IResult<&'a [u8], Value> {
         match tp {
             Self::TINYINT=>{
                 let (i, val) = take_int1(input)?;
@@ -118,15 +208,15 @@ impl ColumnType {
                 Ok((i, Value::from(val as u16)))
             },
             Self::MEDIUMINT=>{
-                let (i, val) = take_int3(input)?;
+                let (i, val) = take_i_int3(input)?;
                 Ok((i, Value::from(val)))
             },
             Self::INT=>{
-                let (i, val) = take_int4(input)?;
+                let (i, val) = take_i_int4(input)?;
                 Ok((i, Value::from(val)))
             },
             Self::BIGINT=>{
-                let (i, val) = take_int8(input)?;
+                let (i, val) = take_i_int8(input)?;
                 Ok((i, Value::from(val)))
             },
             Self::FLOAT=>{
@@ -146,20 +236,8 @@ impl ColumnType {
             Self::DECIMAL=>{
                 let precision = meta.precision.unwrap_or(0u8) as usize;
                 let decimals = meta.decimals.unwrap_or(0u8) as usize;
-                let intg_len = precision - decimals;
-                let frac_len = decimals;
-                let intg_bytes = (intg_len + 1) / 2;
-                let frac_bytes = (frac_len + 1) / 2;
-                let (i, int_part) = take_bytes(input, intg_bytes)?;
-                let (i, scale_part) = take_bytes(i, frac_bytes)?;
-                let (int_val_bs, flag) = take_bytes(int_part, 1)?;
-                let (_, int_val) = take_be_int(int_val_bs, int_val_bs.len())?;
-                let (_, float_val) = take_be_int(scale_part, scale_part.len())?;
-                if flag[0] == 0x80 {
-                    Ok((i, Value::from(format!("{int_val}.{float_val}"))))
-                }else{
-                    Ok((i, Value::from(format!("-{int_val:?}.{float_val:?}"))))
-                }
+                let (i, dec) = DecimalVal::decode(input, precision as u8, decimals as u8)?;
+                Ok((i, Value::from(dec.val)))
             },
             Self::DATE=>{
                 let (i, time) = take_int3(input)?;
@@ -235,7 +313,7 @@ impl ColumnType {
                 let v = Value::from(bs);
                 Ok((i, v))
             },
-            _=>Err(err_maker(input.clone(), ErrorKind::Verify))
+            _=>Err(NomErr::Error(Error::new(input, ErrorKind::Eof)))
         }
     }
 
@@ -382,16 +460,16 @@ impl TableMap {
         if let Some(val) = self.mapping.insert(tb, types){
             //println!("更新列映射");
         }else{
-            println!("新增列映射");
+            //println!("新增列映射");
         }
         if let Some(m) = self.metas.insert(tb, metas) {
             //println!("更新列元数据")
         }else{
-            println!("新增列元数据")
+            //println!("新增列元数据")
         }
     }
 
-    pub fn decode_column_vals<'a>(&'a mut self, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&[u8], Vec<Value>, ParseError> {
+    pub fn decode_column_vals<'a>(&'a mut self, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&[u8], Vec<Value>> {
         let (ip, null_map1) = take_bytes(input, col_map_len)?;
         let mut col_types = self.mapping.get_mut(&table_id).unwrap();
         let mut values:Vec<Value> = Vec::new();
@@ -399,7 +477,7 @@ impl TableMap {
         let mut i = ip;
         for (idx, mut col_type) in col_types.iter_mut().enumerate() {
             let meta = metas[idx].clone();
-            println!("{col_type:?} use meta: {meta:?} idx: {idx}");
+            //println!("{col_type:?} use meta: {meta:?} idx: {idx}");
             let (new_i, val) = ColumnType::decode_val(col_type.clone(), i, &meta)?;
             i = new_i;
             values.push(val);
@@ -410,12 +488,12 @@ impl TableMap {
 
 
 impl Decoder for EventHeaderFlag {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, flags) = take_int2(input)?;
         if let Some(ins) = Self::from_bits(flags as u16){
             Ok((i, ins))
         }else{
-            Err(err_maker(i, ErrorKind::Verify))
+            Err(NomErr::Error(Error::new(input, ErrorKind::Eof)))
         }
     }
 }
@@ -432,7 +510,7 @@ pub struct EventHeader {
 }
 
 impl Decoder for EventHeader {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, _) = take_int1(input)?;
         let (i, timestemp) = take_int4(i)?;
         let (i, event_type) = take_int1(i)?;
@@ -459,7 +537,7 @@ pub struct EventRaw {
 }
 
 impl Decoder for EventRaw {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, header) = EventHeader::decode(input)?;
         Ok((&[], Self{
             header,
@@ -486,7 +564,7 @@ impl RowEventHeader {
 }
 
 impl Decoder for RowEventHeader {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, table_id) = take_int6(input)?;
         let (i, flag) = take_int2(i)?;
         Ok((i, Self{table_id, flag:flag as u16}))
@@ -505,7 +583,7 @@ pub struct TableMapEvent {
 }
 
 impl Decoder for TableMapEvent {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, header) = RowEventHeader::decode(input)?;
         let (i, schema_len) = take_int1(i)?;
         let (i, schema_name) = take_utf8_end_of_null(i)?;
@@ -536,7 +614,7 @@ pub struct WriteRowEvent {
     pub col_map_len: usize
 }
 impl WriteRowEvent {
-    pub fn decode_column_multirow_vals<'a>(table_map: &TableMap, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Vec<Value>>, ParseError<'a>> {
+    pub fn decode_column_multirow_vals<'a>(table_map: &TableMap, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Vec<Value>>> {
         let mut rest_input = input;
         let mut rows:Vec<Vec<Value>> = Vec::new();
         loop{
@@ -552,7 +630,7 @@ impl WriteRowEvent {
 }
 
 impl Decoder for WriteRowEvent{
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, header) = RowEventHeader::decode(input)?;
         let (i, extra_len) = take_int2(i)?;
         //println!("extra len:{extra_len}");
@@ -582,22 +660,23 @@ pub struct UpdateRowEvent {
 
 
 impl Decoder for UpdateRowEvent{
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, header) = RowEventHeader::decode(input)?;
         let (i, extra_len) = take_int2(i)?;
-        println!("extra len:{extra_len}");
+        //println!("extra len:{extra_len}");
         let (i, _) = if extra_len > 2 {
             //处理大于2的extra数据
             let (i, extra_bs) = take_bytes(i, extra_len as usize)?;
             (i, extra_bs)
         }else{(i, i)};
         let (i, column_count) = VLenInt::decode(i)?;
+        //println!("共{}列", column_count.int());
 
         let col_map_len = (column_count.int() as u32 + 7u32)/8u32;
+        //println!("列映射长度:{col_map_len}");
         let (i, col_map1) = take_bytes(i, col_map_len as usize)?;
         let (i, col_map2) = take_bytes(i, col_map_len as usize)?;
-        println!("col map:{col_map1:?}\n col map2: {col_map2:?}");
-        println!("rest:{:?}", i);
+        //println!("列映射1:{col_map1:?} 列映射2:{col_map2:?}");
         Ok((i, Self{
             header,
             col_map_len: col_map_len as usize
@@ -606,13 +685,15 @@ impl Decoder for UpdateRowEvent{
 }
 
 impl UpdateRowEvent {
-    pub fn fetch_rows<'a>(input: &'a [u8], mut table_map: TableMap, table_id: u64, col_map_len: usize) -> IResult<&'a [u8], (Vec<Vec<Value>>, Vec<Vec<Value>>), ParseError<'a>> {
+    pub fn fetch_rows<'a>(input: &'a [u8], mut table_map: TableMap, table_id: u64, col_map_len: usize) -> IResult<&'a [u8], (Vec<Vec<Value>>, Vec<Vec<Value>>)> {
         let mut rest_input = input;
         let mut old_result:Vec<Vec<Value>> = Vec::new();
         let mut new_result:Vec<Vec<Value>> = Vec::new();
         loop {
             let (i, old_vals) = decode_column_vals(table_map.clone(), rest_input, table_id, col_map_len)?;
+            //println!("old values:{old_vals:?}");
             let (i, new_vals) = decode_column_vals(table_map.clone(), i, table_id, col_map_len)?;
+            //println!("new values:{new_vals:?}");
             rest_input = i;
             old_result.push(old_vals);
             new_result.push(new_vals);
@@ -630,7 +711,7 @@ pub struct DeleteRowEvent {
 }
 
 impl DeleteRowEvent {
-    pub fn fetch_rows<'a>(input: &'a [u8], mut table_map: TableMap, table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Vec<Value>>, ParseError<'a>> {
+    pub fn fetch_rows<'a>(input: &'a [u8], mut table_map: TableMap, table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Vec<Value>>> {
         let mut rest_input = input;
         let mut result:Vec<Vec<Value>> = Vec::new();
         loop {
@@ -646,11 +727,11 @@ impl DeleteRowEvent {
 }
 
 impl Decoder for DeleteRowEvent {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         //new_values
         let (i, header) = RowEventHeader::decode(input)?;
         let (i, extra_len) = take_int2(i)?;
-        println!("extra len:{extra_len}");
+        //println!("extra len:{extra_len}");
         let (i, _) = if extra_len > 2 {
             //处理大于2的extra数据
             let (i, extra_bs) = take_bytes(i, extra_len as usize)?;
@@ -659,8 +740,8 @@ impl Decoder for DeleteRowEvent {
         let (i, column_count) = VLenInt::decode(i)?;
         let col_map_len = (column_count.int() as u32 + 7u32)/8u32;
         let (i, col_map1) = take_bytes(i, col_map_len as usize)?;
-        println!("col map:{col_map1:?}");
-        println!("rest:{:?}", i);
+        //println!("col map:{col_map1:?}");
+        //println!("rest:{:?}", i);
         Ok((i, Self{
             header,
             col_map_len: col_map_len as usize
@@ -680,7 +761,7 @@ pub struct QueryEventHeader {
 }
 
 impl Decoder for QueryEventHeader{
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
         let (i, thread_id) = take_int4(input)?;
         let (i, timestamp) = take_int4(i)?;
         let (i, db_len) = take_int1(i)?;
@@ -704,7 +785,7 @@ pub struct QueryEvent {
 }
 
 impl Decoder for QueryEvent {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self>{
         let (i, header) = QueryEventHeader::decode(input)?;
         //println!("Query Rest:{i:?}");
         let (i, bs) = take_bytes(i, header.status_len as usize)?;
@@ -715,14 +796,49 @@ impl Decoder for QueryEvent {
     }
 }
 
-pub fn decode_column_vals<'a>(mut table_map: TableMap, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&'a [u8], Vec<Value>, ParseError<'a>> {
+
+pub struct RotateEvent {
+    pub position: u8,
+    pub binlog_name: String
+}
+
+impl Decoder for RotateEvent{
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> {
+        let (i, position) = take_bytes(input, 1usize)?;
+        let (i, binlog_name) = take_eof_string(i)?;
+        Ok((i, Self{
+            position: 0,
+            binlog_name,
+        }))
+    }
+}
+
+
+fn check_bit(arr: &[u8], index: u16) -> u8 {
+    let byte_index = (index / 8) as usize;
+    let bit_index = (index % 8) as u8;
+    (arr[byte_index] >> bit_index) & 1
+}
+
+fn compute_null_map(arr: &[u8], col_map_len: usize) -> Vec<bool> {
+    let mut map:Vec<bool> = Vec::new();
+    for idx in 0..col_map_len {
+        map.push(check_bit(arr, idx as u16) > 0);
+    }
+    map
+}
+
+pub fn decode_column_vals<'a>(mut table_map: TableMap, input: &'a [u8], table_id: u64, col_map_len: usize) -> IResult<&[u8], Vec<Value>> {
     let (ip, null_map1) = take_bytes(input, col_map_len)?;
     let mut values:Vec<Value> = Vec::new();
     let mut metas = &mut table_map.metas.get_mut(&table_id).unwrap();
+    let null_map = compute_null_map(null_map1, metas.len());
     let mut i = ip;
     for (idx, mut col_type) in &mut table_map.mapping.get_mut(&table_id).unwrap().iter_mut().enumerate() {
+        if null_map[idx] {
+            continue;
+        }
         let meta = metas[idx].clone();
-        //println!("{col_type:?} use meta: {meta:?} idx: {idx}");
         let (new_i, val) = ColumnType::decode_val(col_type.clone(), i, &meta)?;
         i = new_i;
         values.push(val.clone());

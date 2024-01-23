@@ -1,13 +1,10 @@
 use std::collections::HashMap;
 use bytes::{BufMut, BytesMut};
-use nom::{IResult, error, Err, Needed, bytes::{complete, streaming}, AsBytes};
-use nom::error::{Error, ErrorKind};
-use crate::mysql::{Decoder, take_int1, take_int2, take_int4, ParseError, take_bytes, take_utf8_end_of_null, Encoder, take_int3, write_var_bytes, write_null_term_str, write_var_str, take_var_string, take_var_bytes};
+use nom::{IResult, AsBytes};
+use nom::error::{Error, ErrorKind, VerboseError, VerboseErrorKind};
+use nom::Err as NomErr;
+use crate::mysql::{Decoder, take_int1, take_int2, take_int4, take_bytes, take_utf8_end_of_null, Encoder, take_int3, write_var_bytes, write_null_term_str, write_var_str, take_var_string, take_var_bytes};
 
-
-pub(crate) fn err_maker(input: &[u8], kind:ErrorKind) -> Err<ParseError<'_>> {
-    nom::Err::Error(error::make_error::<&[u8], ParseError>(input, kind))
-}
 
 #[derive(Debug, Clone)]
 pub struct HandshakeV10 {
@@ -22,10 +19,10 @@ pub struct HandshakeV10 {
 }
 
 impl Decoder for HandshakeV10 {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, crate::mysql::ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         let (i, protocol_version) = take_int1(input)?;
         if protocol_version != 10 {
-            return Err(err_maker(i, ErrorKind::Verify));
+            return Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Not)));
         }
         //println!("server_version: {:?}\n", i.to_vec());
         let (i, server_version) = take_utf8_end_of_null(i)?;
@@ -139,14 +136,14 @@ impl AuthSwitchReq {
 }
 
 impl Decoder for AuthSwitchReq {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         let (i, tag) =take_int1(input)?;
         //println!("auth switch: {:?}", input);
         if tag != 0xfe {
             //let (_, err_pack) = ErrPacket::decode(input).expect("bhbhbhbh");
             let (_, ok_pack) = OkPacket::decode(input).expect("decode ok error");
             println!("err pack:{:?}", ok_pack);
-            return Err(err_maker(input, ErrorKind::Tag));
+            return Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)));
         }
         let (i, plugin_name) = take_utf8_end_of_null(i)?;
         let plugin_data = if i.len()>0 {
@@ -207,7 +204,7 @@ pub struct TextResult {
     pub columns: Vec<Vec<u8>>,
 }
 impl Decoder for TextResult {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         let mut columns = vec![];
         let mut i = input;
         while i.len() > 0 {
@@ -246,7 +243,7 @@ pub struct ColDef {
 }
 
 impl Decoder for ColDef {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         let (i, catalog) = take_var_string(input)?;
         let (i, schema) = take_var_string(i)?;
         let (i, table) = take_var_string(i)?;
@@ -317,12 +314,12 @@ impl OkPacket {
 }
 
 impl Decoder for OkPacket {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         let (i, header) = take_int1(input)?;
         if header == 0xff {
             let (_, err_pack) = ErrPacket::decode(input).expect("Error Pack");
             println!("err pack:{:?}", err_pack);
-            return Err(err_maker(input, ErrorKind::Tag));
+            return Err(NomErr::Error(Error::new(input, ErrorKind::Fail)));
         }
         let (i, affected_rows) = VLenInt::decode(i)?;
         let (i, last_insert_id) = VLenInt::decode(i)?;
@@ -351,7 +348,7 @@ pub struct ErrPacket {
 }
 
 impl Decoder for ErrPacket {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         let (i, header) = take_int1(input)?;
         let (i, code) = take_int2(i)?;
         let (i, marker) = take_int1(i)?;
@@ -491,7 +488,7 @@ impl VLenInt {
     }
 }
 impl Decoder for VLenInt {
-    fn decode(input: &[u8]) -> IResult<&[u8], Self, ParseError> where Self: Sized {
+    fn decode(input: &[u8]) -> IResult<&[u8], Self> where Self: Sized {
         match input[0] {
             val @ 0..=0xfb => Ok((&input[1..], Self(input[0] as u64))),
             0xfc => {
@@ -506,7 +503,7 @@ impl Decoder for VLenInt {
                 let (i, val) = take_int4(input)?;
                 Ok((&[], Self(val as u64)))
             },
-            0xff => Err(err_maker(input, ErrorKind::Verify)),
+            0xff => Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail))),
         }
     }
 }

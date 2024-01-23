@@ -17,7 +17,7 @@ fn current_ms_ts() -> u128 {
     timestamp
 }
 
-fn current_ts() -> u64 {
+pub fn current_ts() -> u64 {
     let now = SystemTime::now();
     let timestamp = now.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
     timestamp * 1000
@@ -37,7 +37,8 @@ pub struct DmlData {
     pub dml_type: String,
     pub es: u64,
     pub data: Vec<Vec<Value>>,
-    pub old_data: Vec<Vec<Value>>
+    pub old_data: Vec<Vec<Value>>,
+    pub pos: u32
 }
 
 impl DmlData {
@@ -51,14 +52,16 @@ impl DmlData {
             es: 0u64,
             data: Vec::new(),
             old_data: Vec::new(),
+            pos:0
         }
     }
-    pub fn append_data(&mut self, idx: u64, dml_type: String, data: Vec<Vec<Value>>, old_data: Vec<Vec<Value>>) {
+    pub fn append_data(&mut self, idx: u64, dml_type: String, data: Vec<Vec<Value>>, old_data: Vec<Vec<Value>>, pos: u32) {
         self.id = idx;
         self.dml_type = dml_type;
         self.es = current_ts();
         self.data.extend_from_slice(data.as_slice());
         self.old_data.extend_from_slice(old_data.as_slice());
+        self.pos = pos
     }
 }
 
@@ -68,7 +71,7 @@ pub struct DmlMessage {
     pub id: u64,
     pub database: String,
     pub table: String,
-    pub pkNames: Vec<String>,
+    pub pkNames: Option<Vec<String>>,
     pub isDdl: bool,
     pub r#type: String,
     pub es: u64,
@@ -77,7 +80,7 @@ pub struct DmlMessage {
     pub sqlType: HashMap<String, i16>,
     pub mysqlType: HashMap<String, String>,
     pub data: Vec<HashMap<String, Value>>,
-    pub old: Vec<HashMap<String, Value>>
+    pub old: Option<Vec<HashMap<String, Value>>>
 }
 
 impl DmlMessage {
@@ -119,6 +122,7 @@ impl DmlMessage {
             }
             ins.data.push(record);
         }
+        let mut data_old: Vec<HashMap<String, Value>> = Vec::new();
         for vals in dml.old_data.iter_mut() {
             let mut record:HashMap<String, Value> = HashMap::new();
             for (idx, val) in vals.iter().enumerate() {
@@ -126,9 +130,14 @@ impl DmlMessage {
                     record.insert(meta.name.clone(), val.clone().take());
                 }
             }
-            ins.old.push(record)
+            data_old.push(record)
         }
-        ins.pkNames.extend_from_slice(pks.as_slice());
+        if data_old.len() > 0usize{
+            ins.old = Some(data_old);
+        }
+        if pks.len() > 0usize{
+            ins.pkNames = Some(pks);
+        }
         ins
     }
 
@@ -138,7 +147,7 @@ impl DmlMessage {
             id: mid,
             database,
             table,
-            pkNames: vec![],
+            pkNames: None,
             isDdl: false,
             r#type: dml_type,
             es,
@@ -147,7 +156,7 @@ impl DmlMessage {
             sqlType: HashMap::new(),
             mysqlType: HashMap::new(),
             data: Vec::new(),
-            old: Vec::new(),
+            old: None,
         }
     }
 }
@@ -221,17 +230,24 @@ impl TableMetaMapping {
         Self{ mapping: Arc::new(Mutex::new(HashMap::new())) }
     }
 
-    fn update_mapping(&mut self, conn: &mut MySQLConnection, tid: u32, db: String, table: String) -> Vec<FieldMeta> {
+    fn update_mapping(&mut self, conn: &mut MySQLConnection, tid: u32, db: String, table: String) -> Result<Vec<FieldMeta>, ()> {
         loop {
             if let Ok(mut mp) = self.mapping.lock() {
                 if !mp.contains_key(&tid) {
                     let mut cols = Vec::new();
-                    conn.desc_table(db.clone(), table.clone(), &mut cols);
-                    mp.insert(tid, cols.clone());
-                    return cols.clone();
+                    println!("Check Mapping {tid} {db} {table} in {:?}", mp.contains_key(&tid));
+                    if conn.desc_table(db.clone(), table.clone(), &mut cols){
+                        mp.insert(tid, cols.clone());
+                        return Ok(cols.clone());
+                    }else{
+                        mp.insert(tid, Vec::new());
+                        return Ok(Vec::new())
+                    }
                 }else{
                     if let Some(fm) = mp.get(&tid) {
-                        return fm.clone();
+                        return Ok(fm.clone());
+                    }else{
+                        return Err(());
                     }
                 }
             }else{
@@ -306,6 +322,7 @@ fn worker_body(thread_id: usize, rx: Receiver<DmlData>, mapping: &mut TableMetaM
     loop {
         if let Ok(data) = rx.recv() {
             let mut ports: Vec<(String, String)> = Vec::new();
+            let pos = data.pos;
 
             for instance in instances.iter_mut(){
                 if let Some((mq_name, topic)) = instance.check_if_need_a_mq(data.database.clone(), data.table.clone()) {
@@ -313,20 +330,22 @@ fn worker_body(thread_id: usize, rx: Receiver<DmlData>, mapping: &mut TableMetaM
                 }
             }
             if ports.len() < 1 {
-                println!("未匹配到实例：{}.{}", &data.database, &data.table);
+                //println!("未匹配到实例：{}.{}", &data.database, &data.table);
                 continue;
             }
-
-            let mut meta = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone());
-            //println!("\n\n table fields meta:{meta:?}");
-            let message = DmlMessage::from_dml(data, &mut meta);
-            if let Ok(json_message) = serde_json::to_string(&message) {
-                //println!("Canal JSON:\n{}", &json_message);
-                for (mq_name, topic) in ports {
-                    let msg_qu = QueueMessage{ topic, payload: json_message.clone() };
-                    queue.push(&mq_name, msg_qu);
+            if let Ok(mut meta) = mapping.update_mapping(&mut conn, data.table_id, data.database.clone(), data.table.clone()) {
+                if meta.len() == 0usize {
+                    println!("表{}.{} 不存在", data.database, data.table);
+                    continue
                 }
-
+                let message = DmlMessage::from_dml(data, &mut meta);
+                if let Ok(json_message) = serde_json::to_string(&message) {
+                    //println!("Canal JSON:\n{}", &json_message);
+                    for (mq_name, topic) in ports {
+                        let msg_qu = QueueMessage { topic, payload: json_message.clone(), pos };
+                        queue.push(&mq_name, msg_qu);
+                    }
+                }
             }
         }
         //println!("[t:{thread_id}]DML Data: {data:?}");
