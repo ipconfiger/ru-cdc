@@ -76,6 +76,7 @@ fn outgiving_body(rx: Receiver<QueueMessage>, mq_ins: &mut dyn QueueClient, posM
         if let Ok(msg) = rx.recv() {
             mq_ins.queue_message(&msg);
             update_pos(posMng.clone(), msg.pos);
+            //println!("msg sent!");
         }
     }
 }

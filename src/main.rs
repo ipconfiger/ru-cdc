@@ -76,6 +76,7 @@ fn serve(cfg_path: &String) {
     //println!("text result is :{:?}", text_resp);
     let (file, pos) = check_valid_pos(posMng.clone(), text_resp, config.from_start.is_some_and(|b|b));
     println!("{file} {pos}");
+    update_name_pos(posMng.clone(), &file, pos);
 
     let dump = ComBinLogDump {
         pos,
@@ -92,7 +93,7 @@ fn serve(cfg_path: &String) {
     let mut statistics= Statistics::new();
     loop {
         let (_, buf) = conn.read_package::<Vec<u8>>().unwrap();
-        statistics.feed_bytes(buf.payload.len());
+        statistics.feed_bytes(seq_idx, buf.payload.len());
         let event_result = EventRaw::decode(buf.payload.as_bytes());
         if let Ok((_, ev)) = event_result {
             if ev.header.event_type == 19 {

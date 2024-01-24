@@ -55,7 +55,10 @@ impl PositionMng {
 pub fn load_from_file(p: Arc<Mutex<PositionMng>>) -> bool {
     let abs_path = get_abs_path("~/.ru_cdc/meta.json".to_string());
     let position = match read_file_content(abs_path) {
-        Ok(s)=>serde_json::from_str::<PositionSet>(s.as_str()),
+        Ok(s)=> {
+            println!("load meta:{}", &s);
+            serde_json::from_str::<PositionSet>(s.as_str())
+        },
         Err(err)=>{
             println!("读取索引meta失败：{err:?}");
             return false;
@@ -111,20 +114,27 @@ fn read_from_row(row: &TextResult) -> (String, u32) {
 pub fn check_valid_pos(p: Arc<Mutex<PositionMng>>, rd: TextResultSet, from_start: bool) -> (String, u32) {
     let record_count = rd.rows.len();
     loop {
-        if let Ok(mut p) = p.lock() {
-            if p.loaded {
+        if let Ok(mut pm) = p.lock() {
+            if pm.loaded {
                 //如果加载了状态文件，，就检测 from_start标识是否强制覆盖
                 if from_start{
-                    return (read_from_row(&rd.rows[0]).0, 4);
+                    let log_name = read_from_row(&rd.rows[0]).0;
+                    println!("已加载meta file，从头读:{} 4", &log_name);
+                    return (log_name, 4);
                 }else{
-                    return (p.binlog.clone(), p.position);
+                    println!("已加载meta file， 从加载位置开始:{} {}", &pm.binlog, pm.position);
+                    return (pm.binlog.clone(), pm.position);
                 }
             }else{
                 // 如果没有状态文件，就要根据 from_start标识来判断是从头加载还是加载最后一段
                 if from_start {
-                    return (read_from_row(&rd.rows[0]).0, 4);
+                    let log_name = read_from_row(&rd.rows[0]).0;
+                    println!("未加载meta file，从头读:{} 4", &log_name);
+                    return (log_name, 4);
                 }else{
-                    return read_from_row(&rd.rows[record_count-1]);
+                    let meta_record = read_from_row(&rd.rows[record_count-1]);
+                    println!("未加载meta file， 从最新索引开始:{} {}", &meta_record.0, meta_record.1);
+                    return meta_record;
                 }
             }
         }else{
