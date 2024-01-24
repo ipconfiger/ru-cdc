@@ -270,16 +270,23 @@ impl ColumnType {
             },
             Self::DATETIME=>{
                 let (i, dt) = take_bytes(input, 5usize)?;
-                let year_month = read_bits(dt, 1, 17);
-                let year = year_month / 13;
-                let month=year_month % 13;
-                let day = read_bits(dt, 18, 5);
-                let hour = read_bits(dt, 23, 5);
-                let minute = read_bits(dt, 28, 5);
-                let second = read_bits(dt, 34, 5);
+                let val = u64::from_be_bytes([0u8, 0u8, 0u8, dt[0], dt[1], dt[2], dt[3], dt[4]]) - 0x8000000000;
+                let d_val = val >> 17;
+                let t_val = val % (1 << 17);
+                let year = ((d_val >> 5) / 13) as u32;
+                let month = ((d_val >> 5) % 13) as u32;
+                let day = (d_val % (1 << 5)) as u32;
+                let hour = ((val >> 12) % (1 << 5)) as u32;
+                let minute = ((t_val >> 6) % (1 << 6)) as u32;
+                let second = (t_val % (1 << 6)) as u32;
                 let (i, microsecond) = read_fps(i, meta.fsp.unwrap_or(0u8))?;
-                let datetime_str = format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{microsecond:03}");
-                Ok((i, Value::from(datetime_str)))
+                if meta.fsp.unwrap_or(0u8) > 0u8 {
+                    let datetime_str = format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{microsecond:03}");
+                    Ok((i, Value::from(datetime_str)))
+                }else{
+                    let datetime_str = format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}");
+                    Ok((i, Value::from(datetime_str)))
+                }
             },
             Self::YEAR=>{
                 let (i, dt) = take_int1(input)?;
@@ -835,10 +842,11 @@ pub fn decode_column_vals<'a>(mut table_map: TableMap, input: &'a [u8], table_id
     let null_map = compute_null_map(null_map1, metas.len());
     let mut i = ip;
     for (idx, mut col_type) in &mut table_map.mapping.get_mut(&table_id).unwrap().iter_mut().enumerate() {
+        let meta = metas[idx].clone();
         if null_map[idx] {
+            values.push(Value::from(None::<String>));
             continue;
         }
-        let meta = metas[idx].clone();
         let (new_i, val) = ColumnType::decode_val(col_type.clone(), i, &meta)?;
         i = new_i;
         values.push(val.clone());

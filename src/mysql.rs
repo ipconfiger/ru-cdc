@@ -5,6 +5,7 @@ use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
 use nom::error::{ErrorKind, Error, VerboseError, VerboseErrorKind};
 use nom::Err as NomErr;
+use crate::binlog::{ColMeta, TableMap};
 use crate::executor::FieldMeta;
 use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
 
@@ -132,22 +133,32 @@ impl MySQLConnection {
         self.conn.write_all(&buff)
     }
 
-    pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>) -> bool {
+    pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>, table_map: &Vec<ColMeta>) -> bool {
         let sql = format!("desc {db}.{table}");
         //println!("{}", &sql);
         let query = ComQuery{query: sql};
         self.write_package(0, &query);
         if let Ok(text_resp) = self.read_text_result_set() {
-            for row in text_resp.rows {
+            for (idx, row) in text_resp.rows.iter().enumerate() {
                 let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
                 let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
                 let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
-                let meta = FieldMeta {
-                    name,
-                    field_type,
-                    is_pk: Self::check_pk(&pk),
-                };
-                col_meta.push(meta);
+                if field_type.starts_with("datetime"){
+                    let meta = &table_map[idx];
+                    let meta = FieldMeta {
+                        name,
+                        field_type: format!("{}({})", field_type, meta.fsp.unwrap_or(0u8)),
+                        is_pk: Self::check_pk(&pk),
+                    };
+                    col_meta.push(meta);
+                }else {
+                    let meta = FieldMeta {
+                        name,
+                        field_type,
+                        is_pk: Self::check_pk(&pk),
+                    };
+                    col_meta.push(meta);
+                }
             }
             true
         }else{

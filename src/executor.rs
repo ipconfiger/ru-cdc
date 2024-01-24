@@ -11,7 +11,7 @@ use crate::message_queue::{MessageQueues, QueueMessage};
 use crate::mysql::{Decoder, MySQLConnection};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use nom::AsBytes;
-use crate::binlog::{DeleteRowEvent, EventRaw, TableMap, TableMapEvent, UpdateRowEvent, WriteRowEvent};
+use crate::binlog::{ColMeta, DeleteRowEvent, EventRaw, TableMap, TableMapEvent, UpdateRowEvent, WriteRowEvent};
 
 fn current_ms_ts() -> u128 {
     let now = SystemTime::now();
@@ -105,60 +105,188 @@ pub struct DmlMessage {
 }
 
 impl DmlMessage {
+    fn format_val(val: &Value) -> String {
+        if val.is_null() {
+            "null".to_string()
+        }else{
+            if val.is_string(){
+                format!("{}", val.to_string())
+            }else{
+                format!("\"{}\"", val.to_string())
+            }
+        }
+    }
+
+    fn format_json(&mut self,  fields: &mut Vec<FieldMeta>) -> String {
+        let mut buffer:Vec<String> = Vec::new();
+        buffer.push("{".to_string());
+        buffer.push("\"data\":[".to_string());
+        let data_count = &self.data.len();
+        for (i, record) in self.data.iter_mut().enumerate(){
+            buffer.push("{".to_string());
+            let mut key_buffer:Vec<String> = Vec::new();
+            for (idx, meta) in fields.iter().enumerate(){
+                let val = record.get(&meta.name).unwrap();
+                let data_value = format!("\"{}\":{}", &meta.name, Self::format_val(val));
+                key_buffer.push(data_value);
+            }
+            let dict_inner = key_buffer.join(",");
+            buffer.push(dict_inner);
+            if i != (*data_count - 1usize){
+                buffer.push("},".to_string());
+            }else{
+                buffer.push("}".to_string());
+            }
+        }
+        buffer.push("],".to_string());
+        buffer.push(format!("\"database\":\"{}\",", &self.database));
+        buffer.push(format!("\"es\":{},", self.es));
+        buffer.push(format!("\"id\":{},", self.id));
+        buffer.push("\"isDdl\": false,".to_string());
+        buffer.push("\"mysqlType\":{".to_string());
+        for (idx, meta) in fields.iter().enumerate(){
+            let tp = self.mysqlType.get(&meta.name).unwrap();
+            if idx != (fields.len() - 1usize){
+                buffer.push(format!("\"{}\":\"{}\",", meta.name, tp));
+            }else{
+                buffer.push(format!("\"{}\":\"{}\"", meta.name, tp));
+            }
+        }
+        buffer.push("},".to_string());
+        if self.old.is_some(){
+            buffer.push("\"old\":[".to_string());
+            let old_count = self.old.clone().unwrap().len();
+            for (i, record) in self.old.clone().unwrap().iter().enumerate(){
+                buffer.push("{".to_string());
+                let mut key_buffer:Vec<String> = Vec::new();
+                for (idx, meta) in fields.iter().enumerate(){
+                    let val = &record.get::<String>(&meta.name);
+                    if let Some(val_ok) = val {
+                        let val_str = Self::format_val(val_ok);
+                        key_buffer.push(format!("\"{}\":{}", meta.name, val_str));
+                    }
+                }
+                let inner_str = key_buffer.join(",");
+                buffer.push(inner_str);
+                if i != (old_count - 1usize){
+                    buffer.push("},".to_string());
+                }else{
+                    buffer.push("}".to_string());
+                }
+            }
+            buffer.push("],".to_string());
+        }
+        if self.pkNames.is_none() {
+            buffer.push("\"pkNames\":null,".to_string());
+        }else{
+            buffer.push("\"pkNames\":[".to_string());
+            for (idx, name) in self.pkNames.clone().unwrap().iter().enumerate() {
+                if idx != (self.pkNames.clone().unwrap().len() - 1usize){
+                    buffer.push(format!("\"{name}\","));
+                }else{
+                    buffer.push(format!("\"{name}\""));
+                }
+            }
+            buffer.push("],".to_string())
+        }
+        buffer.push("\"sql\":\"\",".to_string());
+        buffer.push("\"sqlType\":{".to_string());
+        for (idx, meta) in fields.iter().enumerate(){
+            let sqlType = self.sqlType.get::<String>(&meta.name).unwrap();
+            if idx!= (fields.len() - 1usize) {
+                buffer.push(format!("\"{}\":{},", meta.name, sqlType));
+            }else{
+                buffer.push(format!("\"{}\":{}", meta.name, sqlType));
+            }
+        }
+        buffer.push("},".to_string());
+        buffer.push(format!("\"table\":\"{}\",", self.table));
+        buffer.push(format!("\"ts\":{},", self.ts));
+        buffer.push(format!("\"type\":\"{}\"", &self.r#type));
+        buffer.push("}".to_string());
+        buffer.join("")
+    }
+
+    fn text_field_data(val: &Value) -> String{
+        match val.as_array(){
+            Some(s)=>{String::from_utf8_lossy(s.iter().map(|n| n.as_u64().unwrap() as u8).collect::<Vec<u8>>().as_slice()).to_string()},
+            None=>String::from("")
+        }
+    }
+
+    fn blob_field_data(val: &Value) -> String {
+        match val.as_array(){
+            Some(s)=>{ String::from_utf16(s.iter().map(|n| n.as_u64().unwrap() as u16).collect::<Vec<u16>>().as_slice()).unwrap()},
+            None=>String::from("")
+        }
+    }
+
     fn from_dml(mut dml: DmlData, fields: &mut Vec<FieldMeta>) -> Self {
         let mut ins = Self::new(dml.id, dml.database, dml.table, dml.dml_type, dml.es);
         let mut pks: Vec<String> = Vec::new();
+        let record_count = dml.data.len();
+        let mut old_record_vec: Vec<HashMap<String, Value>> = Vec::new();
+        for record_id in 0..record_count{
+            let old_vals = dml.old_data.get(record_id);
+            let hash_old_val = old_vals.is_none();
+            let new_vals = dml.data.get(record_id).unwrap();
 
-        for vals in dml.data.iter_mut(){
-            let mut record:HashMap<String, Value> = HashMap::new();
-            for (idx, val) in vals.iter().enumerate(){
-                if let Some(meta) = fields.get_mut(idx){
-                    ins.mysqlType.insert(meta.name.clone(), meta.field_type.clone());
-                    let sql_tp = meta.get_sql_type();
-                    ins.sqlType.insert(meta.name.clone(), sql_tp);
-                    if sql_tp == 2005 {
-                        let val_s = match val.as_array(){
-                            Some(s)=>{String::from_utf8_lossy(s.iter().map(|n| n.as_u64().unwrap() as u8).collect::<Vec<u8>>().as_slice()).to_string()},
-                            None=>String::from("")
-                        };
-                        record.insert(meta.name.clone(), Value::from(val_s));
+            let mut record_data:HashMap<String, Value> = HashMap::new();
+            let mut record_old:HashMap<String, Value> = HashMap::new();
+
+            for (idx, file_meta) in fields.iter_mut().enumerate(){
+                let sql_tp = file_meta.get_sql_type();
+                if record_id == 0 {
+                    ins.mysqlType.insert(file_meta.name.clone(), file_meta.field_type.clone());
+                    ins.sqlType.insert(file_meta.name.clone(), sql_tp);
+                    if file_meta.is_pk {
+                        if !pks.contains(&file_meta.name){
+                            pks.insert(0, file_meta.name.clone());
+                        }
+                    }
+                }
+                let data_val = new_vals.get(idx).unwrap();
+                let is_same = match old_vals {
+                    Some(old_values)=>{
+                        let ov = old_values.get(idx).unwrap();
+                        ov.eq(data_val)
+                    },
+                    None=>true
+                };
+
+                if sql_tp == 2005 {
+                    let val_s = Self::text_field_data(data_val);
+                    record_data.insert(file_meta.name.clone(), Value::from(val_s));
+                    if !is_same{
+                        let old_val = old_vals.unwrap().get(idx).unwrap();
+                        let old_val_s = Self::text_field_data(old_val);
+                        record_old.insert(file_meta.name.clone(), Value::from(old_val_s));
+                    }
+                }else{
+                    if sql_tp == 2004 {
+                        let val_s = Self::blob_field_data(data_val);
+                        record_data.insert(file_meta.name.clone(), Value::from(val_s));
+                        if !is_same {
+                            let old_val = old_vals.unwrap().get(idx).unwrap();
+                            let old_val_s = Self::blob_field_data(old_val);
+                            record_data.insert(file_meta.name.clone(), Value::from(old_val_s));
+                        }
                     }else{
-                        if sql_tp == 2004 {
-                            let val_s = match val.as_array(){
-                                Some(s)=>{ String::from_utf16(s.iter().map(|n| n.as_u64().unwrap() as u16).collect::<Vec<u16>>().as_slice()).unwrap()},
-                                None=>String::from("")
-                            };
-                            record.insert(meta.name.clone(), Value::from(val_s));
-                        }else {
-                            record.insert(meta.name.clone(), val.clone());
-                        }
-                    }
-
-                    if meta.is_pk {
-                        if !pks.contains(&meta.name){
-                            pks.insert(0, meta.name.clone());
+                        record_data.insert(file_meta.name.clone(), data_val.clone());
+                        if !is_same {
+                            let old_val = old_vals.unwrap().get(idx).unwrap();
+                            record_old.insert(file_meta.name.clone(), old_val.clone());
                         }
                     }
                 }
             }
-            ins.data.push(record);
+            ins.data.push(record_data);
+            old_record_vec.push(record_old);
         }
-        let mut data_old: Vec<HashMap<String, Value>> = Vec::new();
-        for vals in dml.old_data.iter_mut() {
-            let mut record:HashMap<String, Value> = HashMap::new();
-            for (idx, val) in vals.iter().enumerate() {
-                if let Some(meta) = fields.get(idx){
-                    record.insert(meta.name.clone(), val.clone().take());
-                }
-            }
-            data_old.push(record)
-        }
-        if data_old.len() > 0usize{
-            ins.old = Some(data_old);
-        }
-        if pks.len() > 0usize{
+        if pks.len() > 0{
             ins.pkNames = Some(pks);
         }
+        ins.old = Some(old_record_vec);
         ins
     }
 
@@ -201,7 +329,7 @@ impl FieldMeta{
             return 4
         }
         if self.field_type.starts_with("bigint") {
-            return 5;
+            return -5;
         }
         if self.field_type.starts_with("float") {
             return 7;
@@ -221,7 +349,7 @@ impl FieldMeta{
         if self.field_type.starts_with("year") {
             return 12;
         }
-        if self.field_type.eq("datetime") || self.field_type.eq("timestamp") {
+        if self.field_type.starts_with("datetime") || self.field_type.starts_with("timestamp") {
             return 93
         }
         if self.field_type.starts_with("char") {
@@ -236,6 +364,7 @@ impl FieldMeta{
         if self.field_type.ends_with("text") {
             return 2005;
         }
+        println!("invalid:{:?}", self);
         -999
     }
 }
@@ -251,13 +380,13 @@ impl TableMetaMapping {
         Self{ mapping: Arc::new(Mutex::new(HashMap::new())) }
     }
 
-    fn update_mapping(&mut self, conn: &mut MySQLConnection, tid: u32, db: String, table: String) -> Result<Vec<FieldMeta>, ()> {
+    fn update_mapping(&mut self, conn: &mut MySQLConnection, tid: u32, db: String, table: String, table_map: &Vec<ColMeta>) -> Result<Vec<FieldMeta>, ()> {
         loop {
             if let Ok(mut mp) = self.mapping.lock() {
                 if !mp.contains_key(&tid) {
                     let mut cols = Vec::new();
                     //println!("Check Mapping {tid} {db} {table} in {:?}", mp.contains_key(&tid));
-                    if conn.desc_table(db.clone(), table.clone(), &mut cols){
+                    if conn.desc_table(db.clone(), table.clone(), &mut cols, table_map){
                         mp.insert(tid, cols.clone());
                         return Ok(cols.clone());
                     }else{
@@ -345,7 +474,8 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
         if let Ok(data) = rx.recv() {
             let mut ports: Vec<(String, String)> = Vec::new();
             let (_, tablemap) = TableMapEvent::decode(data.table_map.payload.as_slice()).expect("table map error");
-            table_map.decode_columns(tablemap.header.table_id, tablemap.column_types, tablemap.column_metas.as_bytes());
+            let tm = tablemap.clone();
+            table_map.decode_columns(tm.header.table_id, tm.column_types, tm.column_metas.as_bytes());
             let mut current_data = DmlData::new_data(tablemap.header.table_id as u32, tablemap.schema_name.clone(), tablemap.table_name.clone());
             for instance in instances.iter_mut(){
                 if let Some((mq_name, topic)) = instance.check_if_need_a_mq(current_data.database.clone(), current_data.table.clone()) {
@@ -353,7 +483,7 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
                 }
             }
             if ports.len() < 1 {
-                //println!("未匹配到实例：{}.{}", &data.database, &data.table);
+                //println!("未匹配到实例：{}.{}", &current_data.database, &current_data.table);
                 continue;
             }
             if let Some(ev) = data.row_event {
@@ -380,18 +510,27 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
                     current_data.append_data(data.seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
                 }
                 if vec![32u8, 31u8, 30u8].contains(&ev.header.event_type) {
-                    if let Ok(mut meta) = mapping.update_mapping(&mut conn, current_data.table_id, current_data.database.clone(), current_data.table.clone()) {
+                    let tm = tablemap.clone();
+                    if let Ok(mut meta) = mapping.update_mapping(&mut conn,
+                                                                 current_data.table_id,
+                                                                 current_data.database.clone(),
+                                                                 current_data.table.clone(),
+                                                                 &table_map.metas[&tm.header.table_id]
+
+                    ) {
                         if meta.len() == 0usize {
                             println!("表{}.{} 不存在", current_data.database, current_data.table);
                             continue
                         }
-                        let message = DmlMessage::from_dml(current_data, &mut meta);
-                        if let Ok(json_message) = serde_json::to_string(&message) {
-                            //println!("Canal JSON:\n{}", &json_message);
+                        let mut message = DmlMessage::from_dml(current_data, &mut meta);
+                        let json_str = message.format_json(&mut meta);
+                        if ports.len() > 0 {
                             for (mq_name, topic) in ports {
-                                let msg_qu = QueueMessage { topic, payload: json_message.clone(), pos };
+                                let msg_qu = QueueMessage { topic, payload: json_str.clone(), pos };
                                 queue.push(&mq_name, msg_qu);
                             }
+                        }else{
+                            println!("没有可用发送端口");
                         }
                     }
 

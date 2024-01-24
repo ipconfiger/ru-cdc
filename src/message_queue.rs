@@ -77,6 +77,7 @@ fn outgiving_body(rx: Receiver<QueueMessage>, mq_ins: &mut dyn QueueClient, posM
             mq_ins.queue_message(&msg);
             update_pos(posMng.clone(), msg.pos);
             //println!("msg sent!");
+            //println!("{}", &msg.payload);
         }
     }
 }
