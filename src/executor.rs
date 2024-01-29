@@ -389,9 +389,8 @@ impl TableMetaMapping {
                     if conn.desc_table(db.clone(), table.clone(), &mut cols, table_map){
                         mp.insert(tid, cols.clone());
                         return Ok(cols.clone());
-                    }else{
-                        mp.insert(tid, Vec::new());
-                        return Ok(Vec::new())
+                    }else {
+                        return Err(());
                     }
                 }else{
                     if let Some(fm) = mp.get(&tid) {
