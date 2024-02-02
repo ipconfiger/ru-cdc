@@ -145,11 +145,14 @@ impl DmlMessage {
         buffer.push("\"isDdl\": false,".to_string());
         buffer.push("\"mysqlType\":{".to_string());
         for (idx, meta) in fields.iter().enumerate(){
-            let tp = self.mysqlType.get(&meta.name).unwrap();
-            if idx != (fields.len() - 1usize){
-                buffer.push(format!("\"{}\":\"{}\",", meta.name, tp));
+            if let Some(tp) = self.mysqlType.get(&meta.name) {
+                if idx != (fields.len() - 1usize) {
+                    buffer.push(format!("\"{}\":\"{}\",", meta.name, tp));
+                } else {
+                    buffer.push(format!("\"{}\":\"{}\"", meta.name, tp));
+                }
             }else{
-                buffer.push(format!("\"{}\":\"{}\"", meta.name, tp));
+                println!("table:{} meta:{} not found in {:?}", &self.table, &meta.name, &self.mysqlType);
             }
         }
         buffer.push("},".to_string());
@@ -468,9 +471,17 @@ impl Workers {
 fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
     println!("[t:{thread_id}] Worker Started");
     let mut table_map = TableMap::new();
-    let mut conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name, config.passwd);
+    let mut last_active = current_ts();
+    let mut conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name.clone(), config.passwd.clone());
     loop {
         if let Ok(data) = rx.recv() {
+            if current_ts() - last_active > 3600000 {
+                conn.close();
+                conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name.clone(), config.passwd.clone());
+                last_active = current_ts();
+                println!("重连于：{last_active}");
+            }
+
             let mut ports: Vec<(String, String)> = Vec::new();
             let (_, tablemap) = TableMapEvent::decode(data.table_map.payload.as_slice()).expect("table map error");
             let tm = tablemap.clone();
@@ -487,27 +498,6 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
             }
             if let Some(ev) = data.row_event {
                 let pos = ev.header.log_pos;
-                if ev.header.event_type == 30 {
-                    let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                    let (_, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
-                    current_data.append_data(data.seq_idx, "INSERT".to_string(), rows, Vec::new(), ev.header.log_pos);
-                }
-                if ev.header.event_type == 31{
-                    let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                    let (_, (old_val, new_val)) = match UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len){
-                        Ok((i, (old_values, new_values)))=> (i, (old_values, new_values)),
-                        Err(err)=>{
-                            println!("exec table:{} fail with: {err:?}", current_data.table);
-                            panic!("{err:?}")
-                        }
-                    };
-                    current_data.append_data(data.seq_idx, "UPDATE".to_string(), new_val, old_val, ev.header.log_pos);
-                }
-                if ev.header.event_type == 32{
-                    let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                    let (_, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
-                    current_data.append_data(data.seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
-                }
                 if vec![32u8, 31u8, 30u8].contains(&ev.header.event_type) {
                     let tm = tablemap.clone();
                     if let Ok(mut meta) = mapping.update_mapping(&mut conn,
@@ -520,6 +510,27 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
                         if meta.len() == 0usize {
                             println!("表{}.{} 不存在", current_data.database, current_data.table);
                             continue
+                        }
+                        if ev.header.event_type == 30 {
+                            let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                            let (_, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
+                            current_data.append_data(data.seq_idx, "INSERT".to_string(), rows, Vec::new(), ev.header.log_pos);
+                        }
+                        if ev.header.event_type == 31{
+                            let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                            let (_, (old_val, new_val)) = match UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len){
+                                Ok((i, (old_values, new_values)))=> (i, (old_values, new_values)),
+                                Err(err)=>{
+                                    println!("exec table:{} fail with: {err:?}", current_data.table);
+                                    panic!("{err:?}")
+                                }
+                            };
+                            current_data.append_data(data.seq_idx, "UPDATE".to_string(), new_val, old_val, ev.header.log_pos);
+                        }
+                        if ev.header.event_type == 32{
+                            let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
+                            let (_, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
+                            current_data.append_data(data.seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
                         }
                         let mut message = DmlMessage::from_dml(current_data, &mut meta);
                         let json_str = message.format_json(&mut meta);

@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
 use nom::error::{ErrorKind, Error, VerboseError, VerboseErrorKind};
@@ -17,6 +17,10 @@ pub struct MySQLConnection {
 impl MySQLConnection {
     pub(crate) fn from_tcp(tcp: TcpStream) -> Self {
         Self{conn: tcp}
+    }
+
+    pub fn close(&mut self) {
+        self.conn.shutdown(Shutdown::Both).expect("连接关闭失败")
     }
 
     pub fn get_connection(ip: &str, port: u32, max_packet_size: u32, user_name: String, passwd: String) -> Self {
@@ -88,6 +92,9 @@ impl MySQLConnection {
 
         let column_count_packet = self.read_package::<VLenInt>();
         if column_count_packet.is_err(){
+            if let Err(err) = column_count_packet{
+                println!("解析列数错误:{err:?}");
+            }
             return Err(());
         }
         let column_count= column_count_packet.unwrap().1.payload;
@@ -136,34 +143,37 @@ impl MySQLConnection {
     pub fn desc_table(&mut self, db: String, table: String, col_meta: &mut Vec<FieldMeta>, table_map: &Vec<ColMeta>) -> bool {
         let sql = format!("desc {db}.{table}");
         //println!("{}", &sql);
-        let query = ComQuery{query: sql};
-        self.write_package(0, &query);
-        if let Ok(text_resp) = self.read_text_result_set() {
-            for (idx, row) in text_resp.rows.iter().enumerate() {
-                let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
-                let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
-                let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
-                if field_type.starts_with("datetime"){
-                    let meta = &table_map[idx];
-                    let meta = FieldMeta {
-                        name,
-                        field_type: format!("{}({})", field_type, meta.fsp.unwrap_or(0u8)),
-                        is_pk: Self::check_pk(&pk),
-                    };
-                    col_meta.push(meta);
-                }else {
-                    let meta = FieldMeta {
-                        name,
-                        field_type,
-                        is_pk: Self::check_pk(&pk),
-                    };
-                    col_meta.push(meta);
+        let query = ComQuery { query: sql.clone() };
+        self.write_package(0, &query).expect("发送DESC命令失败");
+        match self.read_text_result_set() {
+            Ok(text_resp) => {
+                for (idx, row) in text_resp.rows.iter().enumerate() {
+                    let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
+                    let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
+                    let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
+                    if field_type.starts_with("datetime") {
+                        let meta = &table_map[idx];
+                        let meta = FieldMeta {
+                            name,
+                            field_type: format!("{}({})", field_type, meta.fsp.unwrap_or(0u8)),
+                            is_pk: Self::check_pk(&pk),
+                        };
+                        col_meta.push(meta);
+                    } else {
+                        let meta = FieldMeta {
+                            name,
+                            field_type,
+                            is_pk: Self::check_pk(&pk),
+                        };
+                        col_meta.push(meta);
+                    }
                 }
+                true
+            },
+            Err(err) => {
+                println!("DESC fault with SQL:{sql} =》{err:?}");
+                false
             }
-            true
-        }else{
-            println!("DESC fault!");
-            false
         }
     }
     fn check_pk(pk_field: &String) -> bool {
