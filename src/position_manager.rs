@@ -113,6 +113,9 @@ fn read_from_row(row: &TextResult) -> (String, u32) {
 
 pub fn check_valid_pos(p: Arc<Mutex<PositionMng>>, rd: TextResultSet, from_start: bool) -> (String, u32) {
     let record_count = rd.rows.len();
+    for row in &rd.rows {
+        println!("rcd: {:?} ", read_from_row(row))
+    }
     loop {
         if let Ok(mut pm) = p.lock() {
             if pm.loaded {

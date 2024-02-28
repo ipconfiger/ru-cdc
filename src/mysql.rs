@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::ptr::hash;
 use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
 use nom::error::{ErrorKind, Error, VerboseError, VerboseErrorKind};
 use nom::Err as NomErr;
 use crate::binlog::{ColMeta, TableMap};
 use crate::executor::FieldMeta;
-use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
+use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, ErrPacket, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
 
 
 pub struct MySQLConnection {
@@ -24,41 +26,51 @@ impl MySQLConnection {
     }
 
     pub fn get_connection(ip: &str, port: u32, max_packet_size: u32, user_name: String, passwd: String) -> Self {
-        let stream = TcpStream::connect(format!("{ip}:{port}")).unwrap();
-        let mut conn = Self::from_tcp(stream);
-        let (i, p) = conn.read_package::<HandshakeV10>().expect("read error");
-        let mut auth_resp = BytesMut::new();
-        let resp = HandshakeResponse41 {
-            caps: Capabilities::CLIENT_LONG_PASSWORD
-                | Capabilities::CLIENT_PROTOCOL_41
-                | Capabilities::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
-                | Capabilities::CLIENT_RESERVED
-                | Capabilities::CLIENT_RESERVED2
-                | Capabilities::CLIENT_DEPRECATE_EOF
-                | Capabilities::CLIENT_PLUGIN_AUTH,
-            max_packet_size,
-            charset: 255,
-            user_name,
-            auth_resp,
-            database: None,
-            plugin_name: Some(passwd.clone()),
-            connect_attrs: Default::default(),
-            zstd_level: 0,
-        };
-        conn.write_package(1, &resp).expect("Write Error");
-        let (i, switch_req) = conn.read_package::<AuthSwitchReq>().expect("auth error");
-        if switch_req.payload.plugin_name != "mysql_native_password" {
-            panic!("")
-        }
-        let auth_data = native_password_auth(passwd.as_bytes(), &p.payload.auth_plugin_data);
-        let resp = AuthSwitchResp {
-            data: BytesMut::from_iter(auth_data),
-        };
-        conn.write_package(3, &resp).expect("sent auth error");
+        if let Ok(stream) = TcpStream::connect(format!("{ip}:{port}")) {
+            let mut conn = Self::from_tcp(stream);
+            if let Ok((i, p)) = conn.read_package::<HandshakeV10>() {
+                let mut auth_resp = BytesMut::new();
+                let resp = HandshakeResponse41 {
+                    caps: Capabilities::CLIENT_LONG_PASSWORD
+                        | Capabilities::CLIENT_PROTOCOL_41
+                        | Capabilities::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+                        | Capabilities::CLIENT_RESERVED
+                        | Capabilities::CLIENT_RESERVED2
+                        | Capabilities::CLIENT_DEPRECATE_EOF
+                        | Capabilities::CLIENT_PLUGIN_AUTH,
+                    max_packet_size,
+                    charset: 255,
+                    user_name,
+                    auth_resp,
+                    database: None,
+                    plugin_name: Some(passwd.clone()),
+                    connect_attrs: Default::default(),
+                    zstd_level: 0,
+                };
+                conn.write_package(1, &resp).expect("Write Error");
+                let (i, switch_req) = conn.read_package::<AuthSwitchReq>().expect("auth error");
+                if switch_req.payload.plugin_name != "mysql_native_password" {
+                    panic!("")
+                }
+                let auth_data = native_password_auth(passwd.as_bytes(), &p.payload.auth_plugin_data);
+                let resp = AuthSwitchResp {
+                    data: BytesMut::from_iter(auth_data),
+                };
+                conn.write_package(3, &resp).expect("sent auth error");
 
-        let (i, resp) = conn.read_package::<OkPacket>().unwrap();
-        println!("Connected!");
-        conn
+                let (i, resp) = conn.read_package::<OkPacket>().unwrap();
+                info!("Connected!");
+                conn
+            }else{
+                let error_info = format!("read package error");
+                error!("{}", &error_info);
+                panic!("{}", &error_info);
+            }
+        }else{
+            let error_info = format!("can't connect to {ip}:{port}");
+            error!("{}", &error_info);
+            panic!("{}", &error_info);
+        }
     }
 
     pub fn read_package<P:Decoder+Debug+Clone>(&mut self) -> IResult<&[u8], Packet<P>> {
@@ -68,22 +80,37 @@ impl MySQLConnection {
             let header = match Header::decode(buff.chunk()){
                 Ok((_, hd))=>hd,
                 Err(err)=>{
+                    error!("解析数据包头失败:{:?}", err);
                     return Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)));
                 }
             };
+
             //println!("header:{:?}", header);
             let mut buff = BytesMut::with_capacity(header.len as usize);
             buff.resize(header.len as usize, 0);
             if let Ok(_) = self.conn.read_exact(&mut buff) {
                 //println!("body pack:{:?}", buff.to_vec());
+                if let Some(flag) = buff.first(){
+                    if flag.eq(&0xff){
+                        if let Ok((_, err)) = ErrPacket::decode(buff.as_bytes()) {
+                            error!("数据库返回执行失败：{:?}", err.error_msg);
+                        }
+                        return Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)));
+                    }
+                }
                 match P::decode(buff.chunk()){
                     Ok((_, payload)) => Ok((&[], Packet { header, payload })),
-                    Err(err)=>Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)))
+                    Err(err)=>{
+                        error!("解析数据包正文失败:{:?} header:{:?}", err, buff);
+                        Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Fail)))
+                    }
                 }
             }else{
+                error!("读取数据包正文失败");
                 Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Eof)))
             }
         }else{
+            error!("读取数据头失败");
             Err(NomErr::Error(Error::new("".as_ref(), ErrorKind::Eof)))
         }
     }
@@ -93,7 +120,7 @@ impl MySQLConnection {
         let column_count_packet = self.read_package::<VLenInt>();
         if column_count_packet.is_err(){
             if let Err(err) = column_count_packet{
-                println!("解析列数错误:{err:?}");
+                //error!("解析列数错误:{err:?}");
             }
             return Err(());
         }
@@ -145,33 +172,28 @@ impl MySQLConnection {
         //println!("{}", &sql);
         let query = ComQuery { query: sql.clone() };
         self.write_package(0, &query).expect("发送DESC命令失败");
+
         match self.read_text_result_set() {
             Ok(text_resp) => {
                 for (idx, row) in text_resp.rows.iter().enumerate() {
                     let name = String::from_utf8_lossy(row.columns[0].as_bytes()).to_string();
                     let field_type = String::from_utf8_lossy(row.columns[1].as_bytes()).to_string();
                     let pk = String::from_utf8_lossy(row.columns[3].as_bytes()).to_string();
-                    if field_type.starts_with("datetime") {
-                        let meta = &table_map[idx];
-                        let meta = FieldMeta {
-                            name,
-                            field_type: format!("{}({})", field_type, meta.fsp.unwrap_or(0u8)),
-                            is_pk: Self::check_pk(&pk),
-                        };
-                        col_meta.push(meta);
-                    } else {
-                        let meta = FieldMeta {
-                            name,
-                            field_type,
-                            is_pk: Self::check_pk(&pk),
-                        };
-                        col_meta.push(meta);
-                    }
+                    let meta = FieldMeta {
+                        name,
+                        field_type,
+                        is_pk: Self::check_pk(&pk),
+                    };
+                    col_meta.push(meta);
+                }
+                if col_meta.len() != table_map.len(){
+                    error!("长度不匹配，表结构已经变更了，放弃同步:{}", &table);
+                    return false
                 }
                 true
             },
             Err(err) => {
-                println!("DESC fault with SQL:{sql} =》{err:?}");
+                error!("DESC fault with SQL:{sql} =》{err:?}");
                 false
             }
         }

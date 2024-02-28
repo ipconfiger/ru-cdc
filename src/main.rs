@@ -23,7 +23,19 @@ use crate::message_queue::{MessageQueues, QueueMessage};
 use crate::position_manager::{check_valid_pos, load_from_file, PositionMng, update_name_pos, update_pos};
 use crate::statistics::Statistics;
 
+#[macro_use]
+extern crate log;
+extern crate simple_logger;
+use log::{info, error, warn};
+
+#[warn(dead_code)]
+fn simple_logger_level(){
+    simple_logger::init_with_level(log::Level::Info).unwrap();
+}
+
+
 fn main() {
+    simple_logger_level();
     let matches = App::new("Ru-CDC")
         .arg(Arg::with_name("config")
             .short('c')
@@ -65,6 +77,7 @@ fn serve(cfg_path: &String) {
     let posMng = PositionMng::thread_safe_new();
     mq.start_message_queue_from_config(config.clone().mqs, posMng.clone());
     let if_pos_loaded = load_from_file(posMng.clone());
+    info!("before connection");
     let mut conn = MySQLConnection::get_connection(config.clone().db_ip.as_str(), config.clone().db_port as u32, config.clone().max_packages as u32, config.clone().user_name, config.clone().passwd);
     let query = ComQuery{query: "set @master_binlog_checksum= @@global.binlog_checksum".to_string()};
     conn.write_package(0, &query).unwrap();
@@ -75,7 +88,7 @@ fn serve(cfg_path: &String) {
     let text_resp = conn.read_text_result_set().unwrap();
     //println!("text result is :{:?}", text_resp);
     let (file, pos) = check_valid_pos(posMng.clone(), text_resp, config.from_start.is_some_and(|b|b));
-    println!("{file} {pos}");
+    info!("{file} {pos}");
     update_name_pos(posMng.clone(), &file, pos);
 
     let dump = ComBinLogDump {
@@ -92,20 +105,24 @@ fn serve(cfg_path: &String) {
     let mut seq_idx:u64 = 0;
     let mut statistics= Statistics::new();
     loop {
-        let (_, buf) = conn.read_package::<Vec<u8>>().unwrap();
-        statistics.feed_bytes(seq_idx, buf.payload.len());
-        let event_result = EventRaw::decode(buf.payload.as_bytes());
-        if let Ok((_, ev)) = event_result {
-            if ev.header.event_type == 19 {
-                current_packet = Some(RowEvents::new(ev.clone()))
-            }
-            if vec![30u8, 31u8, 32u8, 4u8].contains(&ev.header.event_type) {
-                if let Some(ref mut cp) = current_packet {
-                    cp.append(ev.clone(), seq_idx);
-                    &worker.push(cp);
-                    seq_idx += 1;
+        if let Ok((_, buf)) = conn.read_package::<Vec<u8>>(){
+            statistics.feed_bytes(seq_idx, buf.payload.len());
+            let event_result = EventRaw::decode(buf.payload.as_bytes());
+            if let Ok((_, ev)) = event_result {
+                //println!("meet event: {:?}", &ev.header.event_type);
+                if ev.header.event_type == 19 {
+                    current_packet = Some(RowEvents::new(ev.clone()))
+                }
+                if vec![30u8, 31u8, 32u8, 4u8].contains(&ev.header.event_type) {
+                    if let Some(ref mut cp) = current_packet {
+                        cp.append(ev.clone(), seq_idx);
+                        &worker.push(cp);
+                        seq_idx += 1;
+                    }
                 }
             }
+        }else{
+            error!("读取包失败");
         }
 
     }

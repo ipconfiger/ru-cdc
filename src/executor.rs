@@ -122,20 +122,23 @@ impl DmlMessage {
         buffer.push("{".to_string());
         buffer.push("\"data\":[".to_string());
         let data_count = &self.data.len();
-        for (i, record) in self.data.iter_mut().enumerate(){
-            buffer.push("{".to_string());
-            let mut key_buffer:Vec<String> = Vec::new();
-            for (idx, meta) in fields.iter().enumerate(){
-                let val = record.get(&meta.name).unwrap();
-                let data_value = format!("\"{}\":{}", &meta.name, Self::format_val(val));
-                key_buffer.push(data_value);
-            }
-            let dict_inner = key_buffer.join(",");
-            buffer.push(dict_inner);
-            if i != (*data_count - 1usize){
-                buffer.push("},".to_string());
-            }else{
-                buffer.push("}".to_string());
+        if *data_count > 0usize {
+            for (i, record) in self.data.iter_mut().enumerate(){
+                buffer.push("{".to_string());
+                let mut key_buffer:Vec<String> = Vec::new();
+                for (idx, meta) in fields.iter().enumerate(){
+                    if let Some(val) = record.get(&meta.name){
+                        let data_value = format!("\"{}\":{}", &meta.name, Self::format_val(val));
+                        key_buffer.push(data_value);
+                    }
+                }
+                let dict_inner = key_buffer.join(",");
+                buffer.push(dict_inner);
+                if i != (*data_count - 1usize){
+                    buffer.push("},".to_string());
+                }else{
+                    buffer.push("}".to_string());
+                }
             }
         }
         buffer.push("],".to_string());
@@ -143,19 +146,23 @@ impl DmlMessage {
         buffer.push(format!("\"es\":{},", self.es));
         buffer.push(format!("\"id\":{},", self.id));
         buffer.push("\"isDdl\": false,".to_string());
-        buffer.push("\"mysqlType\":{".to_string());
-        for (idx, meta) in fields.iter().enumerate(){
-            if let Some(tp) = self.mysqlType.get(&meta.name) {
-                if idx != (fields.len() - 1usize) {
-                    buffer.push(format!("\"{}\":\"{}\",", meta.name, tp));
+        if self.mysqlType.len()>0usize {
+            buffer.push("\"mysqlType\":{".to_string());
+            for (idx, meta) in fields.iter().enumerate() {
+                if let Some(tp) = self.mysqlType.get(&meta.name) {
+                    if idx != (fields.len() - 1usize) {
+                        buffer.push(format!("\"{}\":\"{}\",", meta.name, tp));
+                    } else {
+                        buffer.push(format!("\"{}\":\"{}\"", meta.name, tp));
+                    }
                 } else {
-                    buffer.push(format!("\"{}\":\"{}\"", meta.name, tp));
+                    println!("table:{} meta:{} not found in {:?}", &self.table, &meta.name, &self.mysqlType);
                 }
-            }else{
-                println!("table:{} meta:{} not found in {:?}", &self.table, &meta.name, &self.mysqlType);
             }
+            buffer.push("},".to_string());
+        }else{
+            buffer.push("\"mysqlType\":{},".to_string());
         }
-        buffer.push("},".to_string());
         if self.old.is_some(){
             buffer.push("\"old\":[".to_string());
             let old_count = self.old.clone().unwrap().len();
@@ -195,11 +202,15 @@ impl DmlMessage {
         buffer.push("\"sql\":\"\",".to_string());
         buffer.push("\"sqlType\":{".to_string());
         for (idx, meta) in fields.iter().enumerate(){
-            let sqlType = self.sqlType.get::<String>(&meta.name).unwrap();
-            if idx!= (fields.len() - 1usize) {
-                buffer.push(format!("\"{}\":{},", meta.name, sqlType));
+            if let Some(sqlType) = self.sqlType.get::<String>(&meta.name){
+                if idx!= (fields.len() - 1usize) {
+                    buffer.push(format!("\"{}\":{},", meta.name, sqlType));
+                }else{
+                    buffer.push(format!("\"{}\":{}", meta.name, sqlType));
+                }
             }else{
-                buffer.push(format!("\"{}\":{}", meta.name, sqlType));
+                error!("没有找到列映射！table[{}]:{} not in {:?}", &self.table, &meta.name, self.sqlType);
+                panic!()
             }
         }
         buffer.push("},".to_string());
@@ -228,11 +239,15 @@ impl DmlMessage {
         let mut ins = Self::new(dml.id, dml.database, dml.table, dml.dml_type, dml.es);
         let mut pks: Vec<String> = Vec::new();
         let record_count = dml.data.len();
+        let old_record_count = dml.old_data.len();
+        let rc = if record_count > 0 { record_count } else { old_record_count };
+
         let mut old_record_vec: Vec<HashMap<String, Value>> = Vec::new();
-        for record_id in 0..record_count{
+
+        for record_id in 0..rc{
             let old_vals = dml.old_data.get(record_id);
-            let hash_old_val = old_vals.is_none();
-            let new_vals = dml.data.get(record_id).unwrap();
+            let new_vals = dml.data.get(record_id);
+            let no_new_val = new_vals.is_none();
 
             let mut record_data:HashMap<String, Value> = HashMap::new();
             let mut record_old:HashMap<String, Value> = HashMap::new();
@@ -248,18 +263,27 @@ impl DmlMessage {
                         }
                     }
                 }
-                let data_val = new_vals.get(idx).unwrap();
+                let data_val =  if let Some(nv) = new_vals { nv.get(idx) } else { None };
                 let is_same = match old_vals {
-                    Some(old_values)=>{
-                        let ov = old_values.get(idx).unwrap();
-                        ov.eq(data_val)
+                    Some(old_values)=> {
+                        if let Some(ov) = old_values.get(idx) {
+                            if let Some(new_v) = data_val {
+                                ov.eq(new_v)
+                            } else {
+                                true
+                            }
+                        }else{
+                            true
+                        }
                     },
                     None=>true
                 };
 
                 if sql_tp == 2005 {
-                    let val_s = Self::text_field_data(data_val);
-                    record_data.insert(file_meta.name.clone(), Value::from(val_s));
+                    if let Some(dv) = data_val {
+                        let val_s = Self::text_field_data(dv);
+                        record_data.insert(file_meta.name.clone(), Value::from(val_s));
+                    }
                     if !is_same{
                         let old_val = old_vals.unwrap().get(idx).unwrap();
                         let old_val_s = Self::text_field_data(old_val);
@@ -267,15 +291,19 @@ impl DmlMessage {
                     }
                 }else{
                     if sql_tp == 2004 {
-                        let val_s = Self::blob_field_data(data_val);
-                        record_data.insert(file_meta.name.clone(), Value::from(val_s));
+                        if let Some(dv) = data_val {
+                            let val_s = Self::blob_field_data(dv);
+                            record_data.insert(file_meta.name.clone(), Value::from(val_s));
+                        }
                         if !is_same {
                             let old_val = old_vals.unwrap().get(idx).unwrap();
                             let old_val_s = Self::blob_field_data(old_val);
                             record_data.insert(file_meta.name.clone(), Value::from(old_val_s));
                         }
                     }else{
-                        record_data.insert(file_meta.name.clone(), data_val.clone());
+                        if let Some(dv) = data_val {
+                            record_data.insert(file_meta.name.clone(), dv.clone());
+                        }
                         if !is_same {
                             let old_val = old_vals.unwrap().get(idx).unwrap();
                             record_old.insert(file_meta.name.clone(), old_val.clone());
@@ -367,7 +395,7 @@ impl FieldMeta{
         if self.field_type.ends_with("text") {
             return 2005;
         }
-        println!("invalid:{:?}", self);
+        error!("invalid:{:?}", self);
         -999
     }
 }
@@ -375,15 +403,19 @@ impl FieldMeta{
 
 #[derive(Clone)]
 struct TableMetaMapping {
-    mapping: Arc<Mutex<HashMap<u32, Vec<FieldMeta>>>>
+    mapping: Arc<Mutex<HashMap<u32, Vec<FieldMeta>>>>,
+    not_exists: Vec<String>
 }
 
 impl TableMetaMapping {
     fn new()->Self{
-        Self{ mapping: Arc::new(Mutex::new(HashMap::new())) }
+        Self{ mapping: Arc::new(Mutex::new(HashMap::new())), not_exists: vec![] }
     }
 
     fn update_mapping(&mut self, conn: &mut MySQLConnection, tid: u32, db: String, table: String, table_map: &Vec<ColMeta>) -> Result<Vec<FieldMeta>, ()> {
+        if self.not_exists.contains(&table) {
+            return Err(())
+        }
         loop {
             if let Ok(mut mp) = self.mapping.lock() {
                 if !mp.contains_key(&tid) {
@@ -393,6 +425,7 @@ impl TableMetaMapping {
                         mp.insert(tid, cols.clone());
                         return Ok(cols.clone());
                     }else {
+                        self.not_exists.push(table.clone());
                         return Err(());
                     }
                 }else{
@@ -407,9 +440,6 @@ impl TableMetaMapping {
             }
         }
     }
-
-
-
 }
 
 #[derive(Debug)]
@@ -428,7 +458,7 @@ impl Pool {
             if let Ok(tx) = tx_ref.lock(){
                 tx.send(data.clone()).expect("send error");
             }else{
-                println!("==========>(夭寿啦，获取锁失败了)");
+                error!("==========>(夭寿啦，获取锁失败了)");
             }
         }
     }
@@ -469,21 +499,30 @@ impl Workers {
 }
 
 fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMetaMapping, mut queue: MessageQueues, mut instances: Vec<Instance>, config: Config) {
-    println!("[t:{thread_id}] Worker Started");
+    info!("[t:{thread_id}] Worker Started");
     let mut table_map = TableMap::new();
-    let mut last_active = current_ts();
+
     let mut conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name.clone(), config.passwd.clone());
+    let mut last_connect_ts = current_ts();
+
     loop {
         if let Ok(data) = rx.recv() {
-            if current_ts() - last_active > 3600000 {
+            let mut ports: Vec<(String, String)> = Vec::new();
+            let tablemap = match TableMapEvent::decode(data.table_map.payload.as_slice()){
+                Ok((_, table))=>{ table },
+                Err(err)=> {
+                    error!("解码19包失败：{:?} \n data: {:?}", err, data.table_map.payload);
+                    panic!()
+                }
+            };
+
+            let c_ts = current_ts();
+            if c_ts - last_connect_ts > 3600 * 1000 {
                 conn.close();
                 conn = MySQLConnection::get_connection(config.db_ip.as_str(), config.db_port as u32, config.max_packages as u32, config.user_name.clone(), config.passwd.clone());
-                last_active = current_ts();
-                println!("重连于：{last_active}");
+                last_connect_ts = c_ts
             }
 
-            let mut ports: Vec<(String, String)> = Vec::new();
-            let (_, tablemap) = TableMapEvent::decode(data.table_map.payload.as_slice()).expect("table map error");
             let tm = tablemap.clone();
             table_map.decode_columns(tm.header.table_id, tm.column_types, tm.column_metas.as_bytes());
             let mut current_data = DmlData::new_data(tablemap.header.table_id as u32, tablemap.schema_name.clone(), tablemap.table_name.clone());
@@ -508,42 +547,66 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
 
                     ) {
                         if meta.len() == 0usize {
-                            println!("表{}.{} 不存在", current_data.database, current_data.table);
+                            error!("表{}.{} 不存在", current_data.database, current_data.table);
                             continue
                         }
                         if ev.header.event_type == 30 {
-                            let (i, event) = WriteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                            let (_, rows) = WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len).expect("解码数据错误");
-                            current_data.append_data(data.seq_idx, "INSERT".to_string(), rows, Vec::new(), ev.header.log_pos);
+                            if let Ok((i, event)) = WriteRowEvent::decode(ev.payload.as_bytes()){
+                                match WriteRowEvent::decode_column_multirow_vals(&table_map, i, event.header.table_id, event.col_map_len){
+                                    Ok((_, rows))=>{
+                                        //warn!("insert rows:{}", rows.len());
+                                        current_data.append_data(data.seq_idx, "INSERT".to_string(), rows, Vec::new(), ev.header.log_pos);
+                                    },
+                                    Err(ex)=>{
+                                        error!("数据列解码错误:{ex:?}\n data{:?}", ev.payload.as_bytes());
+                                        panic!("{ex:?}")
+                                    }
+                                }
+
+                            }else{
+                                error!("插入包解码错误-data:{:?}", ev.payload.as_bytes());
+                                continue
+                            }
                         }
                         if ev.header.event_type == 31{
-                            let (i, event) = UpdateRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                            let (_, (old_val, new_val)) = match UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len){
-                                Ok((i, (old_values, new_values)))=> (i, (old_values, new_values)),
-                                Err(err)=>{
-                                    println!("exec table:{} fail with: {err:?}", current_data.table);
-                                    panic!("{err:?}")
-                                }
-                            };
-                            current_data.append_data(data.seq_idx, "UPDATE".to_string(), new_val, old_val, ev.header.log_pos);
+                            if let Ok((i, event)) = UpdateRowEvent::decode(ev.payload.as_bytes()) {
+                                let (_, (old_val, new_val)) = match UpdateRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len){
+                                    Ok((i, (old_values, new_values)))=> (i, (old_values, new_values)),
+                                    Err(err)=>{
+                                        error!("exec table:{} fail with: {err:?}", current_data.table);
+                                        panic!("{err:?}")
+                                    }
+                                };
+                                //warn!("update rows:{} {}", new_val.len(), old_val.len());
+                                current_data.append_data(data.seq_idx, "UPDATE".to_string(), new_val, old_val, ev.header.log_pos);
+                            }else{
+                                error!("更新包解码错误-data:{:?}", ev.payload.as_bytes());
+                                continue
+                            }
                         }
                         if ev.header.event_type == 32{
-                            let (i, event) = DeleteRowEvent::decode(ev.payload.as_bytes()).unwrap();
-                            let (_, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
-                            current_data.append_data(data.seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
+                            if let Ok((i, event)) = DeleteRowEvent::decode(ev.payload.as_bytes()){
+                                let (_, old_values) = DeleteRowEvent::fetch_rows(i, table_map.clone(), event.header.table_id, event.col_map_len).expect("解码 Delete Val错误");
+                                //warn!("delete rows:{}", old_values.len());
+                                current_data.append_data(data.seq_idx, "DELETE".to_string(), Vec::new(), old_values, ev.header.log_pos);
+                            }else{
+                                error!("删除包解码错误-data:{:?}", ev.payload.as_bytes());
+                                continue
+                            }
                         }
                         let mut message = DmlMessage::from_dml(current_data, &mut meta);
                         let json_str = message.format_json(&mut meta);
                         if ports.len() > 0 {
                             for (mq_name, topic) in ports {
                                 let msg_qu = QueueMessage { topic, payload: json_str.clone(), pos };
-                                queue.push(&mq_name, msg_qu);
+                                //queue.push(&mq_name, msg_qu);
                             }
                         }else{
-                            println!("没有可用发送端口");
+                            warn!("没有可用发送端口");
                         }
+                    }else{
+                        //error!("解析meta失败，pass");
                     }
-
                 }
             }
         }
