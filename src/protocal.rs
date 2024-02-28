@@ -292,6 +292,16 @@ impl Encoder for ComBinLogDump {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ComPing {
+}
+
+impl Encoder for ComPing {
+    fn encode(&self, buffer: &mut BytesMut) {
+        buffer.put_u8(0x0e);
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct OkPacket {

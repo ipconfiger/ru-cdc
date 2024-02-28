@@ -100,6 +100,8 @@ fn serve(cfg_path: &String) {
     conn.write_package(0, &dump).unwrap();
     let mut current_packet: Option<RowEvents> = None;
 
+    conn.start_keepalive();
+
     let mut worker = Workers::new();
     worker.start(config.workers as usize, mq.clone(), config.clone().instances, config.clone());
     let mut seq_idx:u64 = 0;
@@ -122,7 +124,7 @@ fn serve(cfg_path: &String) {
                 }
             }
         }else{
-            error!("读取包失败");
+            error!("读取包失败或者遇到非预期的包");
         }
 
     }

@@ -3,13 +3,14 @@ use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::ptr::hash;
+use std::time::Duration;
 use nom::{IResult, error, Err, bytes::{complete}, AsBytes};
 use bytes::{Buf, BufMut, BytesMut};
 use nom::error::{ErrorKind, Error, VerboseError, VerboseErrorKind};
 use nom::Err as NomErr;
 use crate::binlog::{ColMeta, TableMap};
 use crate::executor::FieldMeta;
-use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComQuery, ErrPacket, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
+use crate::protocal::{AuthSwitchReq, AuthSwitchResp, Capabilities, ColDef, ComPing, ComQuery, ErrPacket, HandshakeResponse41, HandshakeV10, OkPacket, TextResult, TextResultSet, VLenInt};
 
 
 pub struct MySQLConnection {
@@ -25,8 +26,27 @@ impl MySQLConnection {
         self.conn.shutdown(Shutdown::Both).expect("连接关闭失败")
     }
 
+    pub fn start_keepalive(&mut self) {
+        if let Ok(mut socket) = self.conn.try_clone() {
+            std::thread::spawn(move || {
+                loop{
+                    std::thread::sleep(Duration::from_secs(600));
+                    let com_ping = ComPing{};
+                    let mut buff = BytesMut::new();
+                    encode_package::<ComPing>(&mut buff, 0, &com_ping);
+                    if let Ok(_) = socket.write_all(&buff){
+                        info!("Ping sent!")
+                    }else{
+                        error!("Sent ping fault!")
+                    }
+                }
+            });
+        }
+    }
+
     pub fn get_connection(ip: &str, port: u32, max_packet_size: u32, user_name: String, passwd: String) -> Self {
         if let Ok(stream) = TcpStream::connect(format!("{ip}:{port}")) {
+
             let mut conn = Self::from_tcp(stream);
             if let Ok((i, p)) = conn.read_package::<HandshakeV10>() {
                 let mut auth_resp = BytesMut::new();
@@ -185,10 +205,6 @@ impl MySQLConnection {
                         is_pk: Self::check_pk(&pk),
                     };
                     col_meta.push(meta);
-                }
-                if col_meta.len() != table_map.len(){
-                    error!("长度不匹配，表结构已经变更了，放弃同步:{}", &table);
-                    return false
                 }
                 true
             },
