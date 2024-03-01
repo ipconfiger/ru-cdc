@@ -599,7 +599,7 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
                         if ports.len() > 0 {
                             for (mq_name, topic) in ports {
                                 let msg_qu = QueueMessage { topic, payload: json_str.clone(), pos };
-                                //queue.push(&mq_name, msg_qu);
+                                queue.push(&mq_name, msg_qu);
                             }
                         }else{
                             warn!("没有可用发送端口");
