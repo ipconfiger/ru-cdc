@@ -596,6 +596,7 @@ fn worker_body(thread_id: usize, rx: Receiver<RowEvents>, mapping: &mut TableMet
                         }
                         let mut message = DmlMessage::from_dml(current_data, &mut meta);
                         let json_str = message.format_json(&mut meta);
+                        info!("will sent:\n{}", &json_str);
                         if ports.len() > 0 {
                             for (mq_name, topic) in ports {
                                 let msg_qu = QueueMessage { topic, payload: json_str.clone(), pos };
